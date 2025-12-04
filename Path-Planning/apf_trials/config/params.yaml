@@ -1,0 +1,28 @@
+APF_update:
+  ros__parameters:
+    # force coefficients
+    KATT: 8.0               # Attractive gain
+    KREP: 100.0             # Repulsive gain
+    KENHANCED: 80.0         # Enhanced attraction gain
+    KGRADIENT: 0.1          # Costmap gradient coefficient
+   
+    # Obstacle parameters
+    QSTAR: 0.8              # Influence range threshold (meters)
+    obstacleArrayTopic: "obstacleArrayTopic"  # Topic name for obstacles
+    OBSTACLE_CHECKPOINT_DIST: 0.5  # Distance to ignore checkpoints near obstacles (meters)
+
+    # Path following parameters
+    M: 1.0                  # Potential field exponent
+    CHECKPOINTDIST: 1.2     # Checkpoint triggering distance (meters)
+    LOOKAHEAD_STEPS: 9      # Number of lookahead steps for path following
+
+    # Path file parameters
+    pathFile: "~/roar_ws/ROAR-Nouveau-Autonomous-System/Path-Planning/heightmap_costmap/Results/straight_line_path.csv"
+    costmapFile: "~/roar_ws/ROAR-Nouveau-Autonomous-System/Path-Planning/heightmap_costmap/Results/total_cost.csv"
+
+    # Time parameters
+    TAU: 0.1                # Time step for simulation (seconds)
+
+    # Pixel scale
+    PIXEL_SCALE: 20.0
+    GRADIENT_RADIUS: 1
