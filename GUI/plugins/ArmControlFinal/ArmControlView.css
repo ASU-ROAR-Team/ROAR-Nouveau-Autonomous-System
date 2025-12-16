@@ -1,0 +1,111 @@
+/* Main container */
+.arm-control-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 20px;
+    background-color: #f9fafb;
+    border-radius: 12px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    font-family: 'Inter', sans-serif;
+    color: #333;
+    width: 100%;
+    box-sizing: border-box;
+    gap: 20px;
+}
+
+/* Grid for sliders (two per row) */
+.controls-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    width: 100%;
+    max-width: 800px;
+}
+
+.joint-control {
+    flex: 1 1 calc(50% - 10px); /* two per row */
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 15px;
+    background-color: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    box-sizing: border-box;
+}
+
+/* Slider styling */
+input[type="range"] {
+    width: 100%;
+    height: 8px;
+    border-radius: 4px;
+    background: #e0e0e0;
+    -webkit-appearance: none;
+    outline: none;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #4a90e2;
+    cursor: pointer;
+}
+
+/* Number inputs */
+input[type="number"] {
+    width: 60px;
+    padding: 5px;
+    border-radius: 4px;
+    border: 1px solid #ccc;
+}
+
+/* Presets */
+.preset-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+}
+
+.preset-buttons button {
+    background-color: #3498db;
+    color: white;
+    padding: 8px 16px;
+    border: none;
+    border-radius: 8px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.preset-buttons button:hover {
+    background-color: #2980b9;
+}
+
+/* Status */
+#arm_status {
+    font-weight: bold;
+    text-align: center;
+}
+
+/* Shortcuts */
+.shortcuts {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    width: 100%;
+    max-width: 500px;
+}
+
+.shortcut-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.shortcut-item {
+    display: flex;
+    flex-direction: column;
+    text-align: center;
+    font-size: 0.9em;
+}

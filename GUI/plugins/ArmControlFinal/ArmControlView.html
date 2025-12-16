@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Arm Control</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="ArmControlView.css"/>
+</head>
+<body>
+  <div class="arm-control-container">
+    <!-- Status bar -->
+    <div class="status-bar">
+      <div id="joystickStatusDot" class="status-dot"></div>
+      <div id="joystickStatus">Disconnected</div>
+      <button id="modeSwitchButton">Switch Mode</button>
+    </div>
+
+    <!-- FK Joint Control -->
+    <div class="controls-grid">
+      <div class="joint-control">
+        <h2 class="section-header">Joint Control (FK Mode)</h2>
+        <p>Use these sliders or input boxes to command each joint directly.</p>
+
+        <div class="joint-slider-container">
+          <span id="joint1Vel">J1: 0.0</span>
+          <input type="number" id="joint1Input" class="joint-value-input" min="-180" max="180" value="0"/>
+          <input type="range" id="joint1Slider" min="-180" max="180" value="0"/>
+        </div>
+
+        <div class="joint-slider-container">
+          <span id="joint2Vel">J2: 0.0</span>
+          <input type="number" id="joint2Input" class="joint-value-input" min="0" max="270" value="0"/>
+          <input type="range" id="joint2Slider" min="0" max="270" value="0"/>
+        </div>
+
+        <div class="joint-slider-container">
+          <span id="joint3Vel">J3: 0.0</span>
+          <input type="number" id="joint3Input" class="joint-value-input" min="-180" max="180" value="0"/>
+          <input type="range" id="joint3Slider" min="-180" max="180" value="0"/>
+        </div>
+
+        <div class="joint-slider-container">
+          <span id="joint4Vel">J4: 0.0</span>
+          <input type="number" id="joint4Input" class="joint-value-input" min="-180" max="180" value="0"/>
+          <input type="range" id="joint4Slider" min="-180" max="180" value="0"/>
+        </div>
+
+        <div class="joint-slider-container">
+          <span id="joint5Vel">J5: 0.0</span>
+          <input type="number" id="joint5Input" class="joint-value-input" min="-180" max="180" value="0"/>
+          <input type="range" id="joint5Slider" min="-180" max="180" value="0"/>
+        </div>
+
+        <div class="joint-slider-container">
+          <span id="joint6Vel">EE: 0.0</span>
+          <input type="number" id="joint6Input" class="joint-value-input" min="0" max="1" value="0"/>
+          <input type="range" id="joint6Slider" min="0" max="1" value="0"/>
+        </div>
+
+        <p>Or, use these presets for quick joint configurations:</p>
+        <div class="preset-buttons">
+          <button id="presetButton1" class="preset-button">Pre-Pick</button>
+          <button id="presetButton2" class="preset-button">Home</button>
+          <button id="presetButton3" class="preset-button">Rock Storage</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Live Joint States -->
+    <div class="joint-state-section">
+      <h2 class="section-header">Live Joint States (Degrees)</h2>
+      <div class="joint-state-grid">
+        <div class="joint-state-block" id="joint1State">J1: --</div>
+        <div class="joint-state-block" id="joint2State">J2: --</div>
+        <div class="joint-state-block" id="joint3State">J3: --</div>
+        <div class="joint-state-block" id="joint4State">J4: --</div>
+        <div class="joint-state-block" id="joint5State">J5: --</div>
+        <div class="joint-state-block" id="joint6State">J6: --</div>
+      </div>
+    </div>
+
+    <!-- Keyboard Shortcuts -->
+    <div class="keyboard-shortcuts-section">
+      <h2 class="section-header">Keyboard Shortcuts (FK Mode)</h2>
+      <p>Use the following keys to adjust the joint sliders:</p>
+      <div class="shortcuts-list">
+        <div class="shortcut-item"><span>Joint 1</span><span>Q(-) / W(+)</span> <span>Joint 2</span><span>A(-) / S(+)</span></div>
+        <div class="shortcut-item"><span>Joint 3</span><span>E(-) / R(+)</span> <span>Joint 4</span><span>D(-) / F(+)</span></div>
+        <div class="shortcut-item"><span>Joint 5</span><span>T(-) / Y(+)</span> <span>Joint 6</span><span>G(-) / H(+)</span></div>
+    
+      </div>
+    </div>
+  </div>
+</body>
+</html>
