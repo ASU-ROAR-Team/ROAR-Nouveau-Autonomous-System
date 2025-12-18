@@ -1,138 +1,121 @@
 // src/plugins/Arm-Control/plugin.js
 
-// This plugin assumes that window.ArmControlView is available globally,
-// which means ArmControlView.js must be loaded BEFORE this script in index.html.
-// It also assumes openmct is available globally.
-// WebSocket ROS2 bridge client
-class ROS2Bridge {
-    constructor() {
-        this.ws = new WebSocket("ws://localhost:8080");
-        this.ws.onopen = () => console.log("[ArmControlView] Connected to ROS2 bridge");
-        this.ws.onerror = (err) => console.error("[ArmControlView] WS Error:", err);
-    }
-
-    publishArmCommand(command) {
-        if (this.ws.readyState === WebSocket.OPEN) {
-            this.ws.send(JSON.stringify({
-                source: "arm_control",
-                type: "arm_velocity_command",
-                payload: command
-            }));
-        }
-    }
-}
-
 (function () {
+
     const ARM_CONTROL_KEY = 'arm-control';
     const ARM_ROOT_KEY = 'arm-root';
-    const MAIN_ARM_INSTANCE_KEY = 'main-arm-sliders'; // Renamed key to reflect new UI
+    const MAIN_ARM_INSTANCE_KEY = 'main-arm-sliders';
 
     function ArmControlPlugin() {
         return function install(openmct) {
-            console.log('Arm Control Plugin: install function started.');
 
-            // 1. Define a new object type for your arm control
+            console.log('[ArmControlPlugin] Installing');
+
+            /* 1. Type definition */
             openmct.types.addType(ARM_CONTROL_KEY, {
-                name: 'Robotic Arm Control Sliders', // Updated name to reflect new UI
-                description: 'Slider-based velocity control for a 6-DOF robotic arm via ROS joint velocity messages.',
+                name: 'Robotic Arm Control Sliders',
+                description: 'Slider-based velocity control for a 6-DOF robotic arm',
                 cssClass: 'icon-telemetry',
-                creatable: true,
-                def: {
-                    type: ARM_CONTROL_KEY
-                },
-                initialize: function (domainObject) {
-                    domainObject.name = domainObject.name || 'New Arm Control';
-                },
-                form: []
+                creatable: false
             });
 
-            // 2. Add Object Provider - This resolves objects by their identifiers
+            /* 2. Object Provider */
             openmct.objects.addProvider(ARM_CONTROL_KEY, {
                 get: function (identifier) {
-                    console.log('Object Provider: Getting object for identifier ->', identifier);
-
                     if (identifier.key === ARM_ROOT_KEY) {
-                        // Return the "Arm Controls" folder object
                         return Promise.resolve({
-                            identifier: identifier,
+                            identifier,
                             name: 'Arm Controls',
                             type: 'folder',
                             location: 'ROOT'
                         });
-                    } else if (identifier.key === MAIN_ARM_INSTANCE_KEY) {
-                        // Return the main arm slider instance object
+                    }
+
+                    if (identifier.key === MAIN_ARM_INSTANCE_KEY) {
                         return Promise.resolve({
-                            identifier: identifier,
-                            name: 'Main Robotic Arm Sliders', // Updated name to reflect new UI
+                            identifier,
+                            name: 'Main Robotic Arm Sliders',
                             type: ARM_CONTROL_KEY,
                             location: `${ARM_CONTROL_KEY}:${ARM_ROOT_KEY}`
                         });
                     }
 
-                    return Promise.reject(new Error('Unknown object: ' + identifier.key));
+                    return Promise.reject('Unknown object: ' + identifier.key);
                 }
             });
 
-            // 3. Add Arm Controls as a ROOT object
+            /* 3. Add Arm Controls folder as ROOT */
             openmct.objects.addRoot({
                 namespace: ARM_CONTROL_KEY,
                 key: ARM_ROOT_KEY
             });
 
-            // 4. COMPOSITION PROVIDER (Contents *of* your "Arm Controls" folder)
+            /* 4. Make ROOT show Arm Controls folder */
             openmct.composition.addProvider({
-                appliesTo: function (domainObject) {
-                    const matches = domainObject.identifier.namespace === ARM_CONTROL_KEY &&
-                                    domainObject.identifier.key === ARM_ROOT_KEY;
-                    console.log('COMPOSITION PROVIDER (Arm Folder): Identifier ->', domainObject.identifier, '| Matches ->', matches);
-                    return matches;
+                appliesTo: function (identifier) {
+                    return identifier.namespace === 'ROOT';
                 },
-                load: function (domainObject) {
-                    console.log('Loading children for Arm Controls folder. Adding arm instance.');
-                    return Promise.resolve([
-                        {
-                            namespace: ARM_CONTROL_KEY,
-                            key: MAIN_ARM_INSTANCE_KEY
-                        }
-                    ]);
+                load: function () {
+                    return [
+                        { namespace: ARM_CONTROL_KEY, key: ARM_ROOT_KEY }
+                    ];
                 }
             });
 
-            // 5. Register the view provider for your 'arm-control' type
+            /* 5. Arm folder contents */
+            openmct.composition.addProvider({
+                appliesTo: function (domainObject) {
+                    return (
+                        domainObject.identifier.namespace === ARM_CONTROL_KEY &&
+                        domainObject.identifier.key === ARM_ROOT_KEY
+                    );
+                },
+                load: function () {
+                    return [
+                        { namespace: ARM_CONTROL_KEY, key: MAIN_ARM_INSTANCE_KEY }
+                    ];
+                }
+            });
+
+            /* 6. View provider */
             openmct.objectViews.addProvider({
                 key: 'arm-control-view',
-                name: 'Arm Control Sliders', // Updated name to reflect new UI
+                name: 'Arm Control Sliders',
                 cssClass: 'icon-telemetry',
+
                 canView: function (domainObject) {
                     return domainObject.type === ARM_CONTROL_KEY;
                 },
-                view: function (domainObject) {
-                    let armControlInstance = null;
+
+                view: function () {
+                    let viewInstance;
+
                     return {
                         show: function (element) {
-                            if (typeof window.ArmControlView === 'undefined') {
-                                console.error('ArmControlView not found. Make sure ArmControlView.js is loaded before plugin.js.');
-                                element.innerHTML = '<p style="color: red;">Error: ArmControlView component not loaded.</p>';
+                            if (!window.ArmControlView) {
+                                element.innerHTML =
+                                    '<p style="color:red">ArmControlView not loaded</p>';
                                 return;
                             }
-                            armControlInstance = new window.ArmControlView(element, openmct);
-                            armControlInstance.render();
+
+                            viewInstance = new window.ArmControlView(element, openmct);
+                            viewInstance.render();
                         },
-                        destroy: function (element) {
-                            if (armControlInstance) {
-                                armControlInstance.destroy();
-                                armControlInstance = null;
+
+                        destroy: function () {
+                            if (viewInstance?.destroy) {
+                                viewInstance.destroy();
                             }
+                            viewInstance = null;
                         }
                     };
                 }
             });
 
-            console.log('Arm Control Plugin installed successfully.');
+            console.log('[ArmControlPlugin] Installed successfully');
         };
     }
 
-    // Expose ArmControlPlugin globally
     window.ArmControlPlugin = ArmControlPlugin;
 
 })();
