@@ -30,10 +30,17 @@ class WSROS2Bridge(Node):
         self.cmd_vel_pub  = self.create_publisher(Twist,              '/cmd_vel',                       10)
 
         # ---------------- ROS2 Subscribers ----------------
-        self.create_subscription(String,          '/rover_status',                    self.rover_status_cb,    10)
-        self.create_subscription(String,          '/node_status',                     self.node_status_cb,     10)
-        self.create_subscription(String,          '/drilling/feedback',               self.drilling_status_cb, 10)
-        self.create_subscription(String,          '/drilling_fsm_state',              self.drilling_fsm_cb,    10)
+
+        # Supervisor
+        self.create_subscription(String, '/rover_status', self.rover_status_cb, 10)
+        self.create_subscription(String, '/node_status',  self.node_status_cb,  10)
+
+        # Drilling
+        self.create_subscription(String, '/drilling/feedback',  self.drilling_status_cb, 10)
+        self.create_subscription(String, '/drilling_fsm_state', self.drilling_fsm_cb,    10)
+
+        # cmd_vel echo — lets the UI display current speed commands
+        self.create_subscription(Twist, '/cmd_vel', self.cmd_vel_echo_cb, 10)
 
         # Cameras
         self.create_subscription(
@@ -44,20 +51,14 @@ class WSROS2Bridge(Node):
             '/zed2i/zed_node/depth/depth_registered/color_mapped_image/compressed_for_web',
             self.zed_camera_cb, 10)
 
-        # Costmap / navigation topics
-        self.create_subscription(Odometry, '/filtered_state',    self.robot_pose_cb,     10)
-        self.create_subscription(Path,     '/Path',              self.global_path_cb,    10)
-        self.create_subscription(Path,     '/traversed_path',    self.traversed_path_cb, 10)
-        self.create_subscription(Marker,   '/obstacles',         self.obstacle_cb,       10)
+        # Costmap / navigation
+        self.create_subscription(Odometry, '/filtered_state', self.robot_pose_cb,     10)
+        self.create_subscription(Path,     '/Path',           self.global_path_cb,    10)
+        self.create_subscription(Path,     '/traversed_path', self.traversed_path_cb, 10)
+        self.create_subscription(Marker,   '/obstacles',      self.obstacle_cb,       10)
 
         # ---------------- Internal ----------------
-        self.ws_clients   = set()
-        self.rover_status = {
-            "rover_state": "IDLE",
-            "active_mission": "",
-            "supervisor_message": "",
-            "node_statuses": []
-        }
+        self.ws_clients = set()
 
         # asyncio event loop in a dedicated thread
         self.loop      = asyncio.new_event_loop()
@@ -152,18 +153,42 @@ class WSROS2Bridge(Node):
     # ── ROS2 callbacks ───────────────────────────────────────────────────────
 
     def rover_status_cb(self, msg):
-        try:    self.rover_status = json.loads(msg.data)
-        except Exception as e: self.get_logger().warn(f"Failed to parse rover_status: {e}")
-        self.broadcast(json.dumps({"type": "rover_status", "data": json.dumps(self.rover_status)}))
+        # The supervisor publishes a complete JSON payload — forward it as-is.
+        # node_statuses are already embedded inside it.
+        self.broadcast(json.dumps({
+            "type": "rover_status",
+            "data": msg.data    # already a JSON string
+        }))
 
     def node_status_cb(self, msg):
-        self.broadcast(json.dumps({"type": "node_status", "data": msg.data}))
+        # Separate /node_status topic (e.g. from other nodes) — forwarded independently
+        self.broadcast(json.dumps({
+            "type": "node_status",
+            "data": msg.data
+        }))
 
     def drilling_status_cb(self, msg):
-        self.broadcast(json.dumps({"type": "drilling_status", "data": msg.data}))
+        self.broadcast(json.dumps({
+            "type": "drilling_status",
+            "data": msg.data
+        }))
 
     def drilling_fsm_cb(self, msg):
-        self.broadcast(json.dumps({"type": "drilling_fsm_state", "data": json.dumps({"data": msg.data})}))
+        self.broadcast(json.dumps({
+            "type": "drilling_fsm_state",
+            "data": json.dumps({"data": msg.data})
+        }))
+
+    def cmd_vel_echo_cb(self, msg):
+        # Echo /cmd_vel back to the UI so RoverStatusView can show live speed
+        payload = {
+            "linear":  {"x": msg.linear.x,  "y": msg.linear.y,  "z": msg.linear.z},
+            "angular": {"x": msg.angular.x, "y": msg.angular.y, "z": msg.angular.z}
+        }
+        self.broadcast(json.dumps({
+            "type": "cmd_vel_echo",
+            "data": json.dumps(payload)
+        }))
 
     def logitech_camera_cb(self, msg):
         if not self.ws_clients: return
@@ -176,7 +201,6 @@ class WSROS2Bridge(Node):
         self.broadcast(json.dumps({"type": "zed_frame", "data": json.dumps({"data": b64})}))
 
     def robot_pose_cb(self, msg):
-        # nav_msgs/Odometry → JSON matching the shape the plugin expects
         pos = msg.pose.pose.position
         ori = msg.pose.pose.orientation
         payload = {
@@ -190,7 +214,6 @@ class WSROS2Bridge(Node):
         self.broadcast(json.dumps({"type": "robot_pose", "data": json.dumps(payload)}))
 
     def global_path_cb(self, msg):
-        # nav_msgs/Path → JSON
         poses = [
             {"pose": {"position": {"x": p.pose.position.x, "y": p.pose.position.y, "z": p.pose.position.z}}}
             for p in msg.poses
@@ -198,7 +221,6 @@ class WSROS2Bridge(Node):
         self.broadcast(json.dumps({"type": "global_path", "data": json.dumps({"poses": poses})}))
 
     def traversed_path_cb(self, msg):
-        # nav_msgs/Path → JSON
         poses = [
             {"pose": {"position": {"x": p.pose.position.x, "y": p.pose.position.y, "z": p.pose.position.z}}}
             for p in msg.poses
@@ -206,19 +228,10 @@ class WSROS2Bridge(Node):
         self.broadcast(json.dumps({"type": "traversed_path", "data": json.dumps({"poses": poses})}))
 
     def obstacle_cb(self, msg):
-        # visualization_msgs/Marker → JSON
-        # replaces roar_msgs/Obstacle:
-        #   msg.id           (was msg.id.data      — std_msgs/Int8)
-        #   msg.pose         (was msg.position.pose — geometry_msgs/PoseStamped)
-        #   msg.scale.x / 2  (was msg.radius.data  — std_msgs/Float32, scale = diameter)
         payload = {
             "id": msg.id,
             "pose": {
-                "position": {
-                    "x": msg.pose.position.x,
-                    "y": msg.pose.position.y,
-                    "z": msg.pose.position.z
-                }
+                "position": {"x": msg.pose.position.x, "y": msg.pose.position.y, "z": msg.pose.position.z}
             },
             "scale": {"x": msg.scale.x, "y": msg.scale.y, "z": msg.scale.z}
         }

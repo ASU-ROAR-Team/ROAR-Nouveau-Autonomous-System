@@ -8,13 +8,13 @@
         this.reconnectInterval = null;
 
         this.roverStatus = {
-            rover_state: 'UNKNOWN',
-            active_mission: 'None',
+            rover_state:        'UNKNOWN',
+            active_mission:     'None',
             supervisor_message: '',
-            node_statuses: [],
-            timestamp: 0,
-            linear_speed_x: 0.0,
-            angular_speed_z: 0.0
+            node_statuses:      [],
+            timestamp:          0,
+            linear_speed_x:     0.0,
+            angular_speed_z:    0.0
         };
 
         this.render();
@@ -39,17 +39,26 @@
 
         this.ws.onmessage = (event) => {
             try {
-                const msg = JSON.parse(event.data);
+                const msg  = JSON.parse(event.data);
+                const data = typeof msg.data === 'string' ? JSON.parse(msg.data) : msg.data;
 
-                if (msg.type === "rover_status") {
-                    const data = typeof msg.data === 'string' ? JSON.parse(msg.data) : msg.data;
-                    this.updateRoverStatus(data);
-                } else if (msg.type === "node_status") {
-                    const data = typeof msg.data === 'string' ? JSON.parse(msg.data) : msg.data;
-                    if (Array.isArray(data)) {
-                        this.roverStatus.node_statuses = data;
-                        this.updateNodesDisplay();
-                    }
+                switch (msg.type) {
+                    case 'rover_status':
+                        // Full payload from supervisor — includes node_statuses inside it
+                        this.roverStatus.rover_state        = data.rover_state        || 'UNKNOWN';
+                        this.roverStatus.active_mission     = data.active_mission     || 'None';
+                        this.roverStatus.supervisor_message = data.supervisor_message || '';
+                        this.roverStatus.node_statuses      = data.node_statuses      || [];
+                        this.roverStatus.timestamp          = data.timestamp          || 0;
+                        this.updateDisplay();
+                        break;
+
+                    case 'cmd_vel_echo':
+                        // Live speed from /cmd_vel — published by joystick or autonomy
+                        this.roverStatus.linear_speed_x  = data.linear  ? data.linear.x  : 0.0;
+                        this.roverStatus.angular_speed_z = data.angular ? data.angular.z : 0.0;
+                        this.updateSpeedDisplays();
+                        break;
                 }
             } catch (e) {
                 console.error("RoverStatusView: Failed to parse message", e);
@@ -148,12 +157,12 @@
                 .state-display { font-size: 24px; font-weight: bold; }
                 .speed-display { font-size: 20px; font-weight: bold; color: #007bff; }
                 .rover-state { padding: 8px 16px; border-radius: 20px; text-transform: uppercase; }
-                .rover-state.idle { background-color: #e3f2fd; color: #1565c0; }
-                .rover-state.running { background-color: #e8f5e8; color: #2e7d2e; }
-                .rover-state.paused { background-color: #fff3e0; color: #f57c00; }
-                .rover-state.error { background-color: #ffebee; color: #c62828; }
-                .rover-state.emergencystop { background-color: #ffcdd2; color: #b71c1c; }
-                .rover-state.unknown { background-color: #f5f5f5; color: #757575; }
+                .rover-state.idle            { background-color: #e3f2fd; color: #1565c0; }
+                .rover-state.running         { background-color: #e8f5e8; color: #2e7d2e; }
+                .rover-state.paused          { background-color: #fff3e0; color: #f57c00; }
+                .rover-state.error           { background-color: #ffebee; color: #c62828; }
+                .rover-state.emergencystop   { background-color: #ffcdd2; color: #b71c1c; }
+                .rover-state.unknown         { background-color: #f5f5f5; color: #757575; }
                 .mission-display, .timestamp-display { font-size: 18px; font-weight: 500; color: #333; }
                 .supervisor-message { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 30px; }
                 .supervisor-message h3 { margin-top: 0; margin-bottom: 10px; color: #495057; }
@@ -162,17 +171,21 @@
                 .nodes-section h3 { margin-top: 0; margin-bottom: 20px; color: #495057; }
                 .nodes-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px; }
                 .node-card { border: 1px solid #dee2e6; border-radius: 6px; padding: 15px; background-color: #fff; }
-                .node-card.running, .node-card.healthy { border-left: 4px solid #28a745; }
-                .node-card.stopped, .node-card.inactive { border-left: 4px solid #ffc107; }
-                .node-card.error, .node-card.failed { border-left: 4px solid #dc3545; }
-                .node-card.unknown, .node-card.undefined, .node-card.warning { border-left: 4px solid #6c757d; }
+                .node-card.running           { border-left: 4px solid #28a745; }
+                .node-card.stopped,
+                .node-card.inactive          { border-left: 4px solid #ffc107; }
+                .node-card.error,
+                .node-card.failed            { border-left: 4px solid #dc3545; }
+                .node-card.unknown           { border-left: 4px solid #6c757d; }
                 .node-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
                 .node-name { font-weight: bold; font-size: 16px; }
                 .node-status { padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: bold; text-transform: uppercase; }
-                .node-status.running, .node-status.healthy { background-color: #d4edda; color: #155724; }
-                .node-status.stopped, .node-status.inactive { background-color: #fff3cd; color: #856404; }
-                .node-status.error, .node-status.failed { background-color: #f8d7da; color: #721c24; }
-                .node-status.unknown, .node-status.undefined, .node-status.warning { background-color: #e2e3e5; color: #383d41; }
+                .node-status.running         { background-color: #d4edda; color: #155724; }
+                .node-status.stopped,
+                .node-status.inactive        { background-color: #fff3cd; color: #856404; }
+                .node-status.error,
+                .node-status.failed          { background-color: #f8d7da; color: #721c24; }
+                .node-status.unknown         { background-color: #e2e3e5; color: #383d41; }
                 .node-details { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 14px; }
                 .detail-item { display: flex; justify-content: space-between; }
                 .detail-label { color: #6c757d; }
@@ -183,23 +196,7 @@
         `;
     };
 
-    // ─── Status Updates ───────────────────────────────────────────────────────
-
-    RoverStatusView.prototype.updateRoverStatus = function (statusMessage) {
-        this.roverStatus.rover_state       = statusMessage.rover_state       || 'UNKNOWN';
-        this.roverStatus.active_mission    = statusMessage.active_mission    || 'None';
-        this.roverStatus.node_statuses     = statusMessage.node_statuses     || [];
-        this.roverStatus.timestamp         = statusMessage.timestamp         || 0;
-        this.roverStatus.supervisor_message = statusMessage.supervisor_message || '';
-        // cmd_vel fields come separately via updateCmdVelStatus, preserve them
-        this.updateDisplay();
-    };
-
-    RoverStatusView.prototype.updateCmdVelStatus = function (message) {
-        this.roverStatus.linear_speed_x  = message.linear  ? message.linear.x  : 0.0;
-        this.roverStatus.angular_speed_z = message.angular ? message.angular.z : 0.0;
-        this.updateSpeedDisplays();
-    };
+    // ─── Display updates ──────────────────────────────────────────────────────
 
     RoverStatusView.prototype.updateDisplay = function () {
         this.updateRoverState();
@@ -215,7 +212,7 @@
         if (!el) return;
         const state = this.roverStatus.rover_state || 'UNKNOWN';
         el.textContent = state;
-        el.className = `rover-state ${state.toLowerCase().replace(/_/g, '')}`;
+        el.className   = `rover-state ${state.toLowerCase().replace(/_/g, '')}`;
     };
 
     RoverStatusView.prototype.updateMissionInfo = function () {
@@ -226,11 +223,10 @@
     RoverStatusView.prototype.updateTimestamp = function () {
         const el = this.element.querySelector('#last-update');
         if (!el) return;
-        if (this.roverStatus.timestamp && this.roverStatus.timestamp > 0) {
-            el.textContent = new Date(this.roverStatus.timestamp * 1000).toLocaleTimeString();
-        } else {
-            el.textContent = 'Never';
-        }
+        const ts = this.roverStatus.timestamp;
+        el.textContent = (ts && ts > 0)
+            ? new Date(ts * 1000).toLocaleTimeString()
+            : 'Never';
     };
 
     RoverStatusView.prototype.updateSupervisorMessage = function () {
@@ -256,10 +252,10 @@
         }
 
         grid.innerHTML = nodes.map(node => {
-            const statusClass  = node.status ? node.status.toLowerCase().replace(/_/g, '') : 'unknown';
-            const cpuUsage     = node.cpu_usage    ? node.cpu_usage.toFixed(1)    : '0.0';
-            const memoryUsage  = node.memory_usage ? node.memory_usage.toFixed(1) : '0.0';
-            const pid          = node.pid && node.pid > 0 ? node.pid : 'N/A';
+            const statusClass = (node.status || 'unknown').toLowerCase().replace(/_/g, '');
+            const cpu         = node.cpu_usage    != null ? node.cpu_usage.toFixed(1)    : '0.0';
+            const mem         = node.memory_usage != null ? node.memory_usage.toFixed(1) : '0.0';
+            const pid         = node.pid && node.pid > 0  ? node.pid                     : 'N/A';
 
             return `
                 <div class="node-card ${statusClass}">
@@ -270,11 +266,11 @@
                     <div class="node-details">
                         <div class="detail-item">
                             <span class="detail-label">CPU:</span>
-                            <span class="detail-value">${cpuUsage}%</span>
+                            <span class="detail-value">${cpu}%</span>
                         </div>
                         <div class="detail-item">
                             <span class="detail-label">Memory:</span>
-                            <span class="detail-value">${memoryUsage} MB</span>
+                            <span class="detail-value">${mem} MB</span>
                         </div>
                         <div class="detail-item">
                             <span class="detail-label">PID:</span>
@@ -299,6 +295,7 @@
     RoverStatusView.prototype.destroy = function () {
         if (this.reconnectInterval) clearInterval(this.reconnectInterval);
         if (this.ws) this.ws.close();
+        this.element.innerHTML = '';
         console.log('RoverStatusView destroyed');
     };
 
