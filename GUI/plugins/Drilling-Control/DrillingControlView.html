@@ -13,7 +13,6 @@
             <div id="drillingRosStatus">Disconnected</div>
             <div id="drillingFsmState">IDLE</div>
         </div>
-
         <div class="drilling-controls-grid">
             <div class="drilling-control-section" id="drillingWebcamContainer">
                 <h2 class="drilling-section-header"><span class="drilling-section-header-icon">&#x1F4F7;</span> Live Camera</h2>
@@ -46,6 +45,55 @@
                     </div>
                 </div>
                 <p>These controls directly command the rig. They are active when the system is in "IDLE" state.</p>
+            </div>
+        </div>
+
+        <!-- NEW: Drilling Mission Section -->
+        <div class="drilling-control-section" id="drilling-mission-section">
+            <h2 class="drilling-section-header"><span class="drilling-section-header-icon">🎯</span> Drilling Mission</h2>
+            <p>Configure drilling mission parameters.</p>
+            
+            <!-- Location Slider -->
+            <div class="drilling-mission-slider-container">
+                <label for="drillingLocationSlider" class="drilling-mission-label">Drilling Location</label>
+                <div class="drilling-slider-wrapper">
+                    <input 
+                        type="range" 
+                        id="drillingLocationSlider" 
+                        class="drilling-location-slider"
+                        min="-25" 
+                        max="25" 
+                        step="0.1" 
+                        value="0"
+                    >
+                    <div class="drilling-slider-value-display">
+                        <span id="drillingLocationValue">0.0</span>
+                        <span class="drilling-slider-unit">cm</span>
+                    </div>
+                </div>
+                <div class="drilling-slider-labels">
+                    <span>-25</span>
+                    <span>0</span>
+                    <span>+25</span>
+                </div>
+            </div>
+
+            <!-- Servo & Load Cell Toggles -->
+            <div class="drilling-mission-toggles">
+                <div class="drilling-switch-container">
+                    <span class="drilling-switch-label">Servo</span>
+                    <label class="drilling-switch">
+                        <input type="checkbox" id="drillingServoToggle">
+                        <span class="drilling-slider"></span>
+                    </label>
+                </div>
+                <div class="drilling-switch-container">
+                    <span class="drilling-switch-label">Load Cell</span>
+                    <label class="drilling-switch">
+                        <input type="checkbox" id="drillingLoadCellToggle">
+                        <span class="drilling-slider"></span>
+                    </label>
+                </div>
             </div>
         </div>
 

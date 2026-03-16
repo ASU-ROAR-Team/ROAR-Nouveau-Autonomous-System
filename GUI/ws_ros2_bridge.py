@@ -4,7 +4,7 @@
 import rclpy
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
-from std_msgs.msg import String, Float64MultiArray
+from std_msgs.msg import String, Float64MultiArray, Int32
 from sensor_msgs.msg import JointState, CompressedImage
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry, Path
@@ -23,12 +23,26 @@ class WSROS2Bridge(Node):
         super().__init__('ws_ros2_bridge')
 
         # ---------------- ROS2 Publishers ----------------
+        # Arm control
         self.joint_pub    = self.create_publisher(JointState,        '/fk_joint_states',               10)
         self.pose_pub     = self.create_publisher(Float64MultiArray,  '/ik_target_pose',                10)
+        
+        # CHANGED: Forward kinematics now publishes Float64MultiArray
+        self.fk_angles_pub = self.create_publisher(Float64MultiArray, '/fk_motor_angles',               10)
+
+        # Mission and drilling
         self.mission_pub  = self.create_publisher(String,             '/mission_cmd',                   10)
         self.drilling_pub = self.create_publisher(String,             '/drilling/command_to_actuators',  10)
+
+        # NEW: Drilling mission publishers
+        self.drilling_location_pub = self.create_publisher(Float64MultiArray, '/drilling/mission/location',    10)
+        self.servo_pub             = self.create_publisher(Int32,             '/drilling/mission/servo',       10)
+        self.load_cell_pub         = self.create_publisher(Int32,             '/drilling/mission/load_cell',   10)
+
+        # Navigation
         self.cmd_vel_pub  = self.create_publisher(Twist,              '/cmd_vel',                       10)
         self.lock_orientation_pub = self.create_publisher(String, '/lock_orientation', 10)
+
         # ---------------- ROS2 Subscribers ----------------
 
         # Supervisor
@@ -103,6 +117,12 @@ class WSROS2Bridge(Node):
                     joint_msg.name     = [f'joint{i+1}' for i in range(6)]
                     joint_msg.position = [float(x) for x in data]
                     self.joint_pub.publish(joint_msg)
+                    
+                    # CHANGED: Also publish as Float64MultiArray for FK
+                    fk_msg      = Float64MultiArray()
+                    fk_msg.data = [float(x) for x in data]
+                    self.fk_angles_pub.publish(fk_msg)
+                    
                 elif mode == "IK":
                     pose_msg      = Float64MultiArray()
                     pose_msg.data = [float(x) for x in data]
@@ -117,6 +137,28 @@ class WSROS2Bridge(Node):
                 out      = String()
                 out.data = json.dumps(msg.get("data", {}))
                 self.drilling_pub.publish(out)
+
+            # NEW: Drilling mission commands
+            elif msg_type == "drilling_mission_location":
+                location_value = msg.get("data", 0.0)
+                location_msg      = Float64MultiArray()
+                location_msg.data = [float(location_value)]
+                self.drilling_location_pub.publish(location_msg)
+                self.get_logger().info(f"Drilling location: {location_value}")
+
+            elif msg_type == "drilling_mission_servo":
+                servo_value = msg.get("data", 0)
+                servo_msg      = Int32()
+                servo_msg.data = int(servo_value)
+                self.servo_pub.publish(servo_msg)
+                self.get_logger().info(f"Servo: {servo_value}")
+
+            elif msg_type == "drilling_mission_load_cell":
+                load_cell_value = msg.get("data", 0)
+                load_cell_msg      = Int32()
+                load_cell_msg.data = int(load_cell_value)
+                self.load_cell_pub.publish(load_cell_msg)
+                self.get_logger().info(f"Load cell: {load_cell_value}")
 
             elif msg_type == "cmd_vel":
                 data    = msg.get("data", {})

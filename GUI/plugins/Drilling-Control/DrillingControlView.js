@@ -21,6 +21,13 @@
                 gate_open:   false
             };
 
+            // NEW: Drilling mission state
+            this.drillingMissionState = {
+                location: 0.0,      // -25 to +25
+                servo_on: 0,        // 0 = off, 1 = on
+                load_cell_on: 0     // 0 = off, 1 = on
+            };
+
             // DOM refs — populated in initializeUI()
             this.rosStatusDot            = null;
             this.rosStatus               = null;
@@ -34,6 +41,12 @@
             this.webcamImageElement      = null;
             this.webcamStatusMsgElement  = null;
             this.webcamSnapshotButton    = null;
+
+            // NEW: Drilling mission UI refs
+            this.locationSlider          = null;
+            this.locationSliderValue     = null;
+            this.servoToggleSwitch       = null;
+            this.loadCellToggleSwitch    = null;
         }
 
         // ─── WebSocket ──────────────────────────────────────────────────────
@@ -131,6 +144,37 @@
             }));
 
             console.log('[DrillingControlView] Sent drilling command:', this.currentManualInputState);
+        }
+
+        // NEW: Publish drilling mission commands (location, servo, load_cell)
+
+        publishDrillingMissionCommand(commandType) {
+            if (!this.wsConnected || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+                console.warn('[DrillingControlView] WS not connected. Mission command not sent.');
+                return;
+            }
+
+            let payload = {};
+
+            if (commandType === 'location') {
+                payload = {
+                    type: 'drilling_mission_location',
+                    data: this.drillingMissionState.location
+                };
+            } else if (commandType === 'servo') {
+                payload = {
+                    type: 'drilling_mission_servo',
+                    data: this.drillingMissionState.servo_on
+                };
+            } else if (commandType === 'load_cell') {
+                payload = {
+                    type: 'drilling_mission_load_cell',
+                    data: this.drillingMissionState.load_cell_on
+                };
+            }
+
+            this.ws.send(JSON.stringify(payload));
+            console.log(`[DrillingControlView] Sent drilling mission command (${commandType}):`, payload);
         }
 
         // ─── Inbound message handlers ───────────────────────────────────────
@@ -263,6 +307,12 @@
             this.augerToggleSwitch    = this.element.querySelector('#drillingAugerToggle');
             this.gateToggleSwitch     = this.element.querySelector('#drillingGateToggle');
 
+            // NEW: Drilling mission UI refs
+            this.locationSlider       = this.element.querySelector('#drillingLocationSlider');
+            this.locationSliderValue  = this.element.querySelector('#drillingLocationValue');
+            this.servoToggleSwitch    = this.element.querySelector('#drillingServoToggle');
+            this.loadCellToggleSwitch = this.element.querySelector('#drillingLoadCellToggle');
+
             const webcamContainer = this.element.querySelector('#drillingWebcamContainer');
             if (webcamContainer) {
                 this.webcamImageElement     = webcamContainer.querySelector('#drillingWebcamImage');
@@ -299,6 +349,35 @@
                     this.handleSwitchChange('gate_open', this.gateToggleSwitch.checked);
                 });
             }
+
+            // NEW: Location slider listener
+            if (this.locationSlider) {
+                this.locationSlider.addEventListener('input', (e) => {
+                    const value = parseFloat(e.target.value);
+                    this.drillingMissionState.location = value;
+                    if (this.locationSliderValue) {
+                        this.locationSliderValue.textContent = value.toFixed(1);
+                    }
+                    this.publishDrillingMissionCommand('location');
+                });
+            }
+
+            // NEW: Servo toggle listener
+            if (this.servoToggleSwitch) {
+                this.servoToggleSwitch.addEventListener('change', () => {
+                    this.drillingMissionState.servo_on = this.servoToggleSwitch.checked ? 1 : 0;
+                    this.publishDrillingMissionCommand('servo');
+                });
+            }
+
+            // NEW: Load cell toggle listener
+            if (this.loadCellToggleSwitch) {
+                this.loadCellToggleSwitch.addEventListener('change', () => {
+                    this.drillingMissionState.load_cell_on = this.loadCellToggleSwitch.checked ? 1 : 0;
+                    this.publishDrillingMissionCommand('load_cell');
+                });
+            }
+
             if (this.webcamSnapshotButton) {
                 this.webcamSnapshotButton.addEventListener('click',      () => this.takeWebcamSnapshot());
                 this.webcamSnapshotButton.addEventListener('mousedown',  () => {
@@ -405,6 +484,8 @@
             this.webcamImageElement = this.webcamStatusMsgElement = this.webcamSnapshotButton = null;
             this.rosStatusDot = this.rosStatus = this.fsmStateDisplay = null;
             this.platformDepthDisplay = this.sampleWeightDisplay = null;
+            this.locationSlider = this.locationSliderValue = null;
+            this.servoToggleSwitch = this.loadCellToggleSwitch = null;
             this.currentRoverState = null;
 
             this.element.innerHTML = '';

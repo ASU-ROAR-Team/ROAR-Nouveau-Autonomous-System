@@ -18,6 +18,11 @@
                 joint4: 0, joint5: 0, joint6: 0
             };
 
+            // NEW: Relative IK state
+            this.currentEEPose = { x: 50, y: 0, z: 20, yaw: 0, pitch: 0, roll: 0 };
+            this.relativeDistance = 1; // cm
+            this.relativeDirection = { dx: 0, dy: 0, dz: 0, dyaw: 0, dpitch: 0, droll: 0 };
+
             this.ikValues = { x: 50, y: 0, z: 20, yaw: 0, pitch: 0, roll: 0 };
 
             this.fkPresets = {
@@ -43,6 +48,9 @@
             this.sliders      = {};
             this.numberInputs = {};
             this.ikInputs     = {};
+
+            // NEW: Keyboard tracking
+            this.keysPressed = {};
         }
 
         // ─── WebSocket ──────────────────────────────────────────────────────
@@ -107,6 +115,42 @@
             }));
         }
 
+        // NEW: Send relative IK move
+        sendRelativeIKMove() {
+            if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+                console.warn("[ArmControlView] WS not connected");
+                return;
+            }
+
+            // Calculate new pose by adding deltas to current pose
+            const newPose = {
+                x: this.currentEEPose.x + this.relativeDirection.dx * this.relativeDistance,
+                y: this.currentEEPose.y + this.relativeDirection.dy * this.relativeDistance,
+                z: this.currentEEPose.z + this.relativeDirection.dz * this.relativeDistance,
+                yaw: this.currentEEPose.yaw + this.relativeDirection.dyaw * this.relativeDistance,
+                pitch: this.currentEEPose.pitch + this.relativeDirection.dpitch * this.relativeDistance,
+                roll: this.currentEEPose.roll + this.relativeDirection.droll * this.relativeDistance
+            };
+
+            // Update current pose
+            this.currentEEPose = newPose;
+
+            // Send as IK command
+            const data = Object.values(newPose);
+
+            this.ws.send(JSON.stringify({
+                type: 'joint_cmd',
+                mode: 'IK',
+                data
+            }));
+
+            console.log('[ArmControlView] Sent relative IK move:', newPose);
+
+            // Reset direction after sending
+            this.relativeDirection = { dx: 0, dy: 0, dz: 0, dyaw: 0, dpitch: 0, droll: 0 };
+            this.updateCommandPreview();
+        }
+
         // ─── Render ─────────────────────────────────────────────────────────
 
         render() {
@@ -118,6 +162,7 @@
             this.initWS();
             this.tryConnectROS();
             this.updateModeUI();
+            this.setupKeyboardListeners();
         }
 
         // ─── HTML ────────────────────────────────────────────────────────────
@@ -147,15 +192,65 @@
                     </div>
 
                     <div id="ik_container" class="pose-control" style="display:none">
-                        <p>Define the target end-effector pose.</p>
-                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:15px">
-                            ${['x','y','z','yaw','pitch','roll'].map(k => `
-                                <div>
-                                    <strong>${k.toUpperCase()}</strong>
-                                    <input type="number" id="${k}_input" value="${this.ikValues[k]}" style="width:70px">
-                                    <span>${['x','y','z'].includes(k) ? 'cm' : '°'}</span>
+                        <p>Control end-effector with relative movements.</p>
+                        
+                        <!-- Relative Move Direction Controls -->
+                        <div class="relative-move-panel">
+                            <h3 class="relative-title">Relative Motion Control</h3>
+                            
+                            <!-- Direction Buttons -->
+                            <div class="direction-controls">
+                                <div class="direction-row">
+                                    <button class="dir-btn" id="moveForward" title="W (+Y)">↑ Forward (W)</button>
                                 </div>
-                            `).join('')}
+                                <div class="direction-row">
+                                    <button class="dir-btn" id="moveLeft" title="A (-X)">← Left (A)</button>
+                                    <button class="dir-btn" id="moveBack" title="S (-Y)">↓ Back (S)</button>
+                                    <button class="dir-btn" id="moveRight" title="D (+X)">→ Right (D)</button>
+                                </div>
+                                <div class="direction-row">
+                                    <button class="dir-btn" id="moveUp" title="Q (+Z)">⬆ Up (Q)</button>
+                                    <button class="dir-btn" id="moveDown" title="E (-Z)">⬇ Down (E)</button>
+                                </div>
+                            </div>
+
+                            <!-- Distance Input -->
+                            <div class="distance-input-container">
+                                <label for="distanceInput">Distance (cm):</label>
+                                <input type="number" id="distanceInput" value="1" min="0.1" max="100" step="0.1">
+                                <div class="quick-distance-buttons">
+                                    <button class="quick-dist-btn" data-distance="1">1</button>
+                                    <button class="quick-dist-btn" data-distance="5">5</button>
+                                    <button class="quick-dist-btn" data-distance="10">10</button>
+                                    <button class="quick-dist-btn" data-distance="50">50</button>
+                                </div>
+                            </div>
+
+                            <!-- Command Preview -->
+                            <div class="command-preview">
+                                <strong>Command Preview:</strong>
+                                <div id="previewText" class="preview-text">No movement</div>
+                            </div>
+
+                            <!-- Execute Button -->
+                            <button id="executeRelativeMove" class="execute-button">Execute Move</button>
+
+                            <!-- Current Pose Display -->
+                            <div class="current-pose-display">
+                                <strong>Current EE Pose:</strong>
+                                <div class="pose-values">
+                                    <span>X: <span id="currentX">50.0</span> cm</span>
+                                    <span>Y: <span id="currentY">0.0</span> cm</span>
+                                    <span>Z: <span id="currentZ">20.0</span> cm</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Lock/Home/Unlock Controls -->
+                        <div class="control-strip">
+                            <button id="lockBtn" class="control-strip-btn lock-btn" title="Lock (C)">🔒 Lock</button>
+                            <button id="homeBtn2" class="control-strip-btn home-btn" title="Home (H)">🏠 Home</button>
+                            <button id="unlockBtn" class="control-strip-btn unlock-btn" title="Unlock (U)">🔓 Unlock</button>
                         </div>
                     </div>
                 </div>
@@ -194,6 +289,37 @@
             }
         }
 
+        // NEW: Update command preview text
+        updateCommandPreview() {
+            const previewEl = this.container.querySelector('#previewText');
+            if (!previewEl) return;
+
+            const { dx, dy, dz, dyaw, dpitch, droll } = this.relativeDirection;
+            const dist = this.relativeDistance;
+
+            // Build readable preview
+            const moves = [];
+            if (dx !== 0) moves.push(`X ${dx > 0 ? '+' : ''}${(dx * dist).toFixed(1)} cm`);
+            if (dy !== 0) moves.push(`Y ${dy > 0 ? '+' : ''}${(dy * dist).toFixed(1)} cm`);
+            if (dz !== 0) moves.push(`Z ${dz > 0 ? '+' : ''}${(dz * dist).toFixed(1)} cm`);
+            if (dyaw !== 0) moves.push(`Yaw ${dyaw > 0 ? '+' : ''}${(dyaw * dist).toFixed(1)}°`);
+            if (dpitch !== 0) moves.push(`Pitch ${dpitch > 0 ? '+' : ''}${(dpitch * dist).toFixed(1)}°`);
+            if (droll !== 0) moves.push(`Roll ${droll > 0 ? '+' : ''}${(droll * dist).toFixed(1)}°`);
+
+            previewEl.innerText = moves.length > 0 ? moves.join(", ") : "No movement";
+        }
+
+        // NEW: Update current pose display
+        updatePoseDisplay() {
+            const xEl = this.container.querySelector('#currentX');
+            const yEl = this.container.querySelector('#currentY');
+            const zEl = this.container.querySelector('#currentZ');
+
+            if (xEl) xEl.innerText = this.currentEEPose.x.toFixed(1);
+            if (yEl) yEl.innerText = this.currentEEPose.y.toFixed(1);
+            if (zEl) zEl.innerText = this.currentEEPose.z.toFixed(1);
+        }
+
         bindElements() {
             // FK sliders
             this.jointNames.forEach(joint => {
@@ -218,18 +344,6 @@
                 n.oninput = () => handler(n.value);
             });
 
-            // IK inputs
-            ['x','y','z','yaw','pitch','roll'].forEach(k => {
-                const el = this.container.querySelector(`#${k}_input`);
-                this.ikInputs[k] = el;
-
-                el.oninput = () => {
-                    this.ikValues[k] = Number(el.value);
-                    if (this.mode === 'IK') this.publishPose();
-                    this.sendWSUpdate();
-                };
-            });
-
             // Mode switch
             this.container.querySelector('#modeSwitchButton').onclick = () => {
                 this.mode = this.mode === 'FK' ? 'IK' : 'FK';
@@ -243,15 +357,168 @@
             // Lock Orientation Toggle
             this.container.querySelector('#lockOrientationBtn').onclick = () => {
                 this.orientationLocked = !this.orientationLocked;
-
                 const btn = this.container.querySelector('#lockOrientationBtn');
                 const state = this.orientationLocked ? "ON" : "OFF";
-
                 btn.innerText = `Lock Orientation: ${state}`;
-
                 this.publishLockState(state);
                 this.sendWSLockState(state);
+            };
+
+            // NEW: Relative move direction buttons
+            const directionMap = {
+                'moveForward': { dx: 0, dy: 1, dz: 0, dyaw: 0, dpitch: 0, droll: 0 },
+                'moveBack':    { dx: 0, dy: -1, dz: 0, dyaw: 0, dpitch: 0, droll: 0 },
+                'moveLeft':    { dx: -1, dy: 0, dz: 0, dyaw: 0, dpitch: 0, droll: 0 },
+                'moveRight':   { dx: 1, dy: 0, dz: 0, dyaw: 0, dpitch: 0, droll: 0 },
+                'moveUp':      { dx: 0, dy: 0, dz: 1, dyaw: 0, dpitch: 0, droll: 0 },
+                'moveDown':    { dx: 0, dy: 0, dz: -1, dyaw: 0, dpitch: 0, droll: 0 }
+            };
+
+            Object.keys(directionMap).forEach(btnId => {
+                const btn = this.container.querySelector(`#${btnId}`);
+                if (btn) {
+                    btn.onclick = () => {
+                        this.relativeDirection = directionMap[btnId];
+                        this.updateCommandPreview();
+                    };
+                }
+            });
+
+            // NEW: Distance input
+            const distInput = this.container.querySelector('#distanceInput');
+            if (distInput) {
+                distInput.oninput = () => {
+                    this.relativeDistance = parseFloat(distInput.value) || 1;
+                    this.updateCommandPreview();
                 };
+            }
+
+            // NEW: Quick distance buttons
+            const quickDistBtns = this.container.querySelectorAll('.quick-dist-btn');
+            quickDistBtns.forEach(btn => {
+                btn.onclick = () => {
+                    const dist = parseFloat(btn.dataset.distance);
+                    this.relativeDistance = dist;
+                    distInput.value = dist;
+                    this.updateCommandPreview();
+                };
+            });
+
+            // NEW: Execute button
+            const executeBtn = this.container.querySelector('#executeRelativeMove');
+            if (executeBtn) {
+                executeBtn.onclick = () => this.sendRelativeIKMove();
+            }
+
+            // NEW: Lock/Home/Unlock buttons
+            const lockBtn = this.container.querySelector('#lockBtn');
+            if (lockBtn) {
+                lockBtn.onclick = () => {
+                    this.orientationLocked = true;
+                    this.publishLockState('ON');
+                    this.sendWSLockState('ON');
+                };
+            }
+
+            const homeBtn2 = this.container.querySelector('#homeBtn2');
+            if (homeBtn2) {
+                homeBtn2.onclick = () => this.applyPreset('home');
+            }
+
+            const unlockBtn = this.container.querySelector('#unlockBtn');
+            if (unlockBtn) {
+                unlockBtn.onclick = () => {
+                    this.orientationLocked = false;
+                    this.publishLockState('OFF');
+                    this.sendWSLockState('OFF');
+                };
+            }
+
+            this.updatePoseDisplay();
+        }
+
+        // NEW: Setup keyboard listeners
+        setupKeyboardListeners() {
+            console.log("[ArmControlView] Setting up keyboard listeners...");
+            
+            // Store bound handlers for later cleanup
+            this.keyDownHandler = (e) => this.handleKeyDown(e);
+            this.keyUpHandler = (e) => this.handleKeyUp(e);
+            
+            // Attach to window to ensure we catch all keyboard events
+            window.addEventListener('keydown', this.keyDownHandler, true);
+            window.addEventListener('keyup', this.keyUpHandler, true);
+            
+            // Also attach to container in case it has focus
+            if (this.container) {
+                this.container.addEventListener('keydown', this.keyDownHandler);
+                this.container.addEventListener('keyup', this.keyUpHandler);
+                this.container.tabIndex = 0; // Make container focusable
+            }
+            
+            console.log("[ArmControlView] Keyboard listeners attached to window");
+        }
+
+        // NEW: Handle keyboard input
+        handleKeyDown(e) {
+            const key = e.key.toLowerCase();
+            console.log(`[ArmControlView] Key pressed: ${key}, Mode: ${this.mode}`);
+
+            if (this.mode !== 'IK') {
+                console.log(`[ArmControlView] Not in IK mode, skipping. Current mode: ${this.mode}`);
+                return;
+            }
+
+            this.keysPressed[key] = true;
+
+            const directionMap = {
+                'w': { dx: 0, dy: 1, dz: 0, dyaw: 0, dpitch: 0, droll: 0 },   // Forward
+                's': { dx: 0, dy: -1, dz: 0, dyaw: 0, dpitch: 0, droll: 0 },  // Back
+                'a': { dx: -1, dy: 0, dz: 0, dyaw: 0, dpitch: 0, droll: 0 },  // Left
+                'd': { dx: 1, dy: 0, dz: 0, dyaw: 0, dpitch: 0, droll: 0 },   // Right
+                'q': { dx: 0, dy: 0, dz: 1, dyaw: 0, dpitch: 0, droll: 0 },   // Up
+                'e': { dx: 0, dy: 0, dz: -1, dyaw: 0, dpitch: 0, droll: 0 },  // Down
+            };
+
+            if (directionMap[key]) {
+                console.log(`[ArmControlView] Direction mapped: ${key}`, directionMap[key]);
+                e.preventDefault();
+                this.relativeDirection = directionMap[key];
+                this.updateCommandPreview();
+            }
+
+            // Execute on Space or Enter
+            if (key === ' ' || key === 'enter') {
+                console.log(`[ArmControlView] Execute triggered`);
+                e.preventDefault();
+                this.sendRelativeIKMove();
+            }
+
+            // Lock/Home/Unlock
+            if (key === 'c') {
+                console.log(`[ArmControlView] Lock triggered`);
+                e.preventDefault();
+                this.orientationLocked = true;
+                this.publishLockState('ON');
+                this.sendWSLockState('ON');
+            }
+            if (key === 'h') {
+                console.log(`[ArmControlView] Home triggered`);
+                e.preventDefault();
+                this.applyPreset('home');
+            }
+            if (key === 'u') {
+                console.log(`[ArmControlView] Unlock triggered`);
+                e.preventDefault();
+                this.orientationLocked = false;
+                this.publishLockState('OFF');
+                this.sendWSLockState('OFF');
+            }
+        }
+
+        handleKeyUp(e) {
+            const key = e.key.toLowerCase();
+            delete this.keysPressed[key];
         }
 
         // ─── Presets ────────────────────────────────────────────────────────
@@ -269,14 +536,16 @@
                 this.publishJointStates();
             } else {
                 const preset = this.ikPresets[type];
-                Object.keys(preset).forEach(k => {
-                    this.ikValues[k]     = preset[k];
-                    this.ikInputs[k].value = preset[k];
-                });
-                this.publishPose();
+                this.currentEEPose = { ...preset };
+                this.updatePoseDisplay();
+                
+                const data = Object.values(preset);
+                this.ws.send(JSON.stringify({
+                    type: 'joint_cmd',
+                    mode: 'IK',
+                    data
+                }));
             }
-
-            this.sendWSUpdate();
         }
 
         // ─── ROS (optional direct ROSLIB path) ──────────────────────────────
@@ -311,10 +580,10 @@
                 messageType: 'std_msgs/Float64MultiArray'
             });
             this.lockPublisher = new ROSLIB.Topic({
-            ros: this.ros,
-            name: '/lock_orientation',
-            messageType: 'std_msgs/String'
-                });
+                ros: this.ros,
+                name: '/lock_orientation',
+                messageType: 'std_msgs/String'
+            });
         }
 
         publishJointStates() {
@@ -327,30 +596,27 @@
             if (!this.posePublisher) return;
             this.posePublisher.publish({ data: Object.values(this.ikValues) });
         }
+
         publishLockState(state) {
-        if (!this.lockPublisher) return;
+            if (!this.lockPublisher) return;
+            this.lockPublisher.publish({ data: state });
+            console.log("[ArmControlView] Lock Orientation:", state);
+        }
 
-        this.lockPublisher.publish({
-            data: state
-        });
-        
+        sendWSLockState(state) {
+            if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+                console.warn("[ArmControlView] WS not connected");
+                return;
+            }
 
-        console.log("[ArmControlView] Lock Orientation:", state);
-    }
-    sendWSLockState(state) {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-        console.warn("[ArmControlView] WS not connected");
-        return;
-    }
+            const message = {
+                type: "lock_orientation",
+                data: state
+            };
 
-    const message = {
-        type: "lock_orientation",
-        data: state
-    };
-
-    console.log("[ArmControlView] Sending WS:", message);
-    this.ws.send(JSON.stringify(message));
-}
+            console.log("[ArmControlView] Sending WS:", message);
+            this.ws.send(JSON.stringify(message));
+        }
 
         // ─── Destroy ────────────────────────────────────────────────────────
 
@@ -358,6 +624,16 @@
             if (this.reconnectInterval) clearInterval(this.reconnectInterval);
             if (this.ws)  this.ws.close();
             if (this.ros) this.ros.close();
+            
+            // Remove keyboard listeners using stored handlers
+            if (this.keyDownHandler) window.removeEventListener('keydown', this.keyDownHandler, true);
+            if (this.keyUpHandler) window.removeEventListener('keyup', this.keyUpHandler, true);
+            
+            if (this.container) {
+                if (this.keyDownHandler) this.container.removeEventListener('keydown', this.keyDownHandler);
+                if (this.keyUpHandler) this.container.removeEventListener('keyup', this.keyUpHandler);
+            }
+            
             console.log('[ArmControlView] destroyed');
         }
     }
