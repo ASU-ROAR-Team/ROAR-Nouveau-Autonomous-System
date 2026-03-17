@@ -136,14 +136,14 @@ class WSROS2Bridge(Node):
                 self.mission_pub.publish(out)
 
             # UPDATED: Drilling command now expects Float64MultiArray
-            # data = [direction, auger, speed, stop]
+            # data = [direction, auger, gate, speed, stop]
             elif msg_type == "drilling_cmd":
                 data = msg.get("data", [])
-                if len(data) >= 4:
+                if len(data) >= 5:
                     drilling_msg      = Float64MultiArray()
-                    drilling_msg.data = [float(x) for x in data[:4]]
+                    drilling_msg.data = [float(x) for x in data[:5]]
                     self.drilling_pub.publish(drilling_msg)
-                    self.get_logger().info(f"Drilling command: direction={data[0]}, auger={data[1]}, speed={data[2]}, stop={data[3]}")
+                    self.get_logger().info(f"Drilling command: direction={data[0]}, auger={data[1]}, gate={data[2]}, speed={data[3]}, stop={data[4]}")
 
             # UPDATED: Drilling mission command as Float64MultiArray
             # data = [location, servo, load_cell]

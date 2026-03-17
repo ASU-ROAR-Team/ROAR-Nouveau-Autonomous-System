@@ -14,12 +14,19 @@
             this.currentRoverState = { rover_state: 'IDLE', active_mission: '' };
             this.last_known_height = 0.0;
 
-            // UPDATED: Manual control state with speed
+            // UPDATED: Manual control state with speed and gate
             this.currentManualInputState = {
                 direction: 0,       // -1 (down), 0 (idle), 1 (up)
                 auger_on: false,
+                gate_open: false,   // 0 (closed) or 1 (open)
                 speed: 0.0,         // 0 to 20 m/s
                 stop_enabled: false
+            };
+
+            // NEW: Track movement state for toggle behavior (not momentary)
+            this.movementState = {
+                isMoving: false,    // true if Up or Down is actively engaged
+                currentDirection: 0 // -1, 0, or 1
             };
 
             // UPDATED: Drilling mission state (single combined topic)
@@ -145,12 +152,13 @@
                 return;
             }
 
-            // Payload: [direction, auger, speed, stop]
+            // Payload: [direction, auger, gate, speed, stop]
             const payload = {
                 type: 'drilling_cmd',
                 data: [
                     this.currentManualInputState.direction,  // -1 (down), 0 (idle), 1 (up)
                     this.currentManualInputState.auger_on ? 1 : 0,
+                    this.currentManualInputState.gate_open ? 1 : 0,
                     this.currentManualInputState.speed,
                     this.currentManualInputState.stop_enabled ? 1 : 0
                 ]
@@ -356,44 +364,65 @@
         }
 
         addEventListeners() {
-            // UPDATED: Manual control buttons with direction handling
+            // UPDATED: Manual control buttons with TOGGLE behavior (not momentary)
+            // Press Up → keeps moving up until Down or Stop pressed
+            // Press Down → keeps moving down until Up or Stop pressed
+            
             if (this.platformUpButton) {
-                this.platformUpButton.addEventListener('mousedown', () => {
+                this.platformUpButton.addEventListener('click', () => {
                     if (!this.platformUpButton.disabled) {
-                        this.currentManualInputState.direction = 1;
-                        this.publishDrillingCommand();
-                    }
-                });
-                this.platformUpButton.addEventListener('mouseup', () => {
-                    if (!this.platformUpButton.disabled) {
-                        this.currentManualInputState.direction = 0;
-                        this.publishDrillingCommand();
-                    }
-                });
-                this.platformUpButton.addEventListener('mouseleave', () => {
-                    if (!this.platformUpButton.disabled) {
-                        this.currentManualInputState.direction = 0;
+                        // If Stop is enabled, disable it first
+                        if (this.currentManualInputState.stop_enabled) {
+                            this.currentManualInputState.stop_enabled = false;
+                            this.platformStopButton.classList.toggle('active', false);
+                        }
+                        
+                        // Toggle up movement
+                        if (this.movementState.currentDirection === 1) {
+                            // Already moving up, toggle it off
+                            this.movementState.isMoving = false;
+                            this.movementState.currentDirection = 0;
+                            this.currentManualInputState.direction = 0;
+                            this.platformUpButton.classList.toggle('active', false);
+                            this.platformDownButton.classList.toggle('active', false);
+                        } else {
+                            // Start moving up (cancel down if it was active)
+                            this.movementState.isMoving = true;
+                            this.movementState.currentDirection = 1;
+                            this.currentManualInputState.direction = 1;
+                            this.platformUpButton.classList.toggle('active', true);
+                            this.platformDownButton.classList.toggle('active', false);
+                        }
                         this.publishDrillingCommand();
                     }
                 });
             }
 
             if (this.platformDownButton) {
-                this.platformDownButton.addEventListener('mousedown', () => {
+                this.platformDownButton.addEventListener('click', () => {
                     if (!this.platformDownButton.disabled) {
-                        this.currentManualInputState.direction = -1;
-                        this.publishDrillingCommand();
-                    }
-                });
-                this.platformDownButton.addEventListener('mouseup', () => {
-                    if (!this.platformDownButton.disabled) {
-                        this.currentManualInputState.direction = 0;
-                        this.publishDrillingCommand();
-                    }
-                });
-                this.platformDownButton.addEventListener('mouseleave', () => {
-                    if (!this.platformDownButton.disabled) {
-                        this.currentManualInputState.direction = 0;
+                        // If Stop is enabled, disable it first
+                        if (this.currentManualInputState.stop_enabled) {
+                            this.currentManualInputState.stop_enabled = false;
+                            this.platformStopButton.classList.toggle('active', false);
+                        }
+                        
+                        // Toggle down movement
+                        if (this.movementState.currentDirection === -1) {
+                            // Already moving down, toggle it off
+                            this.movementState.isMoving = false;
+                            this.movementState.currentDirection = 0;
+                            this.currentManualInputState.direction = 0;
+                            this.platformDownButton.classList.toggle('active', false);
+                            this.platformUpButton.classList.toggle('active', false);
+                        } else {
+                            // Start moving down (cancel up if it was active)
+                            this.movementState.isMoving = true;
+                            this.movementState.currentDirection = -1;
+                            this.currentManualInputState.direction = -1;
+                            this.platformDownButton.classList.toggle('active', true);
+                            this.platformUpButton.classList.toggle('active', false);
+                        }
                         this.publishDrillingCommand();
                     }
                 });
@@ -403,8 +432,19 @@
             if (this.platformStopButton) {
                 this.platformStopButton.addEventListener('click', () => {
                     if (!this.platformStopButton.disabled) {
+                        // Toggle stop state
                         this.currentManualInputState.stop_enabled = !this.currentManualInputState.stop_enabled;
                         this.platformStopButton.classList.toggle('active', this.currentManualInputState.stop_enabled);
+                        
+                        // When stop is enabled, zero out movement
+                        if (this.currentManualInputState.stop_enabled) {
+                            this.movementState.isMoving = false;
+                            this.movementState.currentDirection = 0;
+                            this.currentManualInputState.direction = 0;
+                            this.platformUpButton.classList.toggle('active', false);
+                            this.platformDownButton.classList.toggle('active', false);
+                        }
+                        
                         this.publishDrillingCommand();
                     }
                 });
@@ -431,7 +471,7 @@
 
             if (this.gateToggleSwitch) {
                 this.gateToggleSwitch.addEventListener('change', () => {
-                    // Gate toggle logic (if needed)
+                    this.currentManualInputState.gate_open = this.gateToggleSwitch.checked;
                     this.publishDrillingCommand();
                 });
             }
@@ -546,6 +586,11 @@
         destroy() {
             console.log('[DrillingControlView] Destroying...');
 
+            // Reset movement state to stop any ongoing movement
+            this.movementState.isMoving = false;
+            this.movementState.currentDirection = 0;
+            this.currentManualInputState.direction = 0;
+
             if (this.reconnectInterval) clearInterval(this.reconnectInterval);
             if (this.locationSliderDebounceTimer) clearTimeout(this.locationSliderDebounceTimer);
             if (this.ws) this.ws.close();
@@ -565,6 +610,7 @@
             this.locationSlider = this.locationSliderValue = null;
             this.servoToggleSwitch = this.loadCellToggleSwitch = null;
             this.currentRoverState = null;
+            this.movementState = null;
 
             this.element.innerHTML = '';
         }

@@ -159,6 +159,18 @@
     box-shadow: none;
 }
 
+/* NEW: Active state for Up/Down buttons when movement is engaged */
+.drilling-control-button.active {
+    background-color: #27ae60;
+    box-shadow: 0 0 12px rgba(39, 174, 96, 0.6) inset;
+    font-weight: bold;
+}
+
+.drilling-control-button.active:hover:not(:disabled) {
+    background-color: #229954;
+    box-shadow: 0 0 12px rgba(39, 174, 96, 0.8) inset;
+}
+
 /* UPDATED: Stop button styling (warning color) */
 .drilling-stop-button {
     background-color: #e74c3c;
