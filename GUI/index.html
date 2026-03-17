@@ -18,8 +18,9 @@
 
   <script src="plugins/Arm-Control/ArmControlView.js"></script>
 <script src="plugins/Arm-Control/plugin.js"></script>
+<script src="plugins/Arm-Control-v2/ArmControlV2View.js"></script>
+  <script src="plugins/Arm-Control-v2/plugin.js"></script>
 
-  
 
   <script src="plugins/Drilling-Control/DrillingControlView.js"></script>
   <script src="plugins/Drilling-Control/plugin.js"></script>
@@ -28,6 +29,7 @@
   <script src="plugins/joystick-control/JoystickView.js"></script>
 
   <link rel="stylesheet" href="plugins/Arm-Control/ArmControlView.css">
+  <link rel="stylesheet" href="plugins/Arm-Control-v2/ArmControlV2View.css">
   <link rel="stylesheet" href="plugins/joystick-control/JoystickView.css">
   <link rel="stylesheet" href="plugins/Drilling-Control/DrillingControlView.css">
 
@@ -84,6 +86,7 @@
       openmct.install(window.JoystickPlugin());
       openmct.install(window.MissionControlPlugin());
       openmct.install(window.ArmControlPlugin());
+      openmct.install(window.ArmControlV2Plugin());
       openmct.install(window.ThemeToggleObjectPlugin());
       
       openmct.start();

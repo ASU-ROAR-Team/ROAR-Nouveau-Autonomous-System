@@ -1,0 +1,573 @@
+// src/plugins/Arm-Control-v2/ArmControlV2View.js
+(function () {
+    'use strict';
+
+    class ArmControlV2View {
+        constructor(container, openmct, wsUrl = "ws://localhost:8080") {
+            this.container = container;
+            this.openmct   = openmct;
+            this.wsUrl     = wsUrl;
+            this.mode = "FK";
+
+            // FK state
+            this.jointNames = ['joint1', 'joint2', 'joint3', 'joint4', 'joint5', 'joint6'];
+            this.jointValues = {
+                joint1: 0, joint2: 0, joint3: 0,
+                joint4: 0, joint5: 0, joint6: 0
+            };
+
+            this.jointRanges = {
+                joint1: { min: -180, max: 180,  label: 'Joint 1 (°)' },
+                joint2: { min: 0,    max: 270,  label: 'Joint 2 (°)' },
+                joint3: { min: -180, max: 180,  label: 'Joint 3 (°)' },
+                joint4: { min: -180, max: 180,  label: 'Joint 4 (°)' },
+                joint5: { min: -180, max: 180,  label: 'Joint 5 (°)' },
+                joint6: { min: 0,    max: 1,    label: 'Gripper (0-1)' }
+            };
+
+            // IK state
+            this.ikValues = {
+                x:     50,
+                y:     0,
+                z:     20,
+                roll:  0,
+                pitch: 0,
+                yaw:   0
+            };
+
+            this.ikRanges = {
+                x:     { min: 0,   max: 100,  label: 'X (cm)' },
+                y:     { min: -50, max: 50,   label: 'Y (cm)' },
+                z:     { min: 0,   max: 100,  label: 'Z (cm)' },
+                roll:  { min: -180, max: 180, label: 'Roll (°)' },
+                pitch: { min: -180, max: 180, label: 'Pitch (°)' },
+                yaw:   { min: -180, max: 180, label: 'Yaw (°)' }
+            };
+
+            // Presets
+            this.fkPresets = {
+                home: { joint1: 0,  joint2: 0,   joint3: 0,  joint4: 0, joint5: 0,  joint6: 0 },
+                rest: { joint1: 0,  joint2: -45,  joint3: 90, joint4: 0, joint5: 45, joint6: 0 }
+            };
+
+            this.ikPresets = {
+                home: { x: 50, y: 0,  z: 20, roll: 0, pitch: 0,   yaw: 0 },
+                rest: { x: 30, y: 20, z: 10, roll: 0, pitch: -45, yaw: 0 }
+            };
+
+            // WebSocket state
+            this.ws               = null;
+            this.reconnectInterval = null;
+
+            // ROS
+            this.ros            = null;
+            this.jointPublisher = null;
+            this.posePublisher  = null;
+
+            // DOM refs
+            this.fkSliders       = {};
+            this.fkNumberInputs  = {};
+            this.fkDisplaySpans  = {};
+            this.ikSliders       = {};
+            this.ikNumberInputs  = {};
+            this.ikDisplaySpans  = {};
+
+            // Keyboard tracking
+            this.keysPressed = {};
+        }
+
+        // ─── WebSocket ──────────────────────────────────────────────────────
+
+        initWS() {
+            if (this.ws && this.ws.readyState !== WebSocket.CLOSED) return;
+
+            this.ws = new WebSocket(this.wsUrl);
+
+            this.ws.onopen = () => {
+                console.log("[ArmControlV2View] Connected to WS bridge");
+                this.updateConnectionStatus(true);
+                if (this.reconnectInterval) {
+                    clearInterval(this.reconnectInterval);
+                    this.reconnectInterval = null;
+                }
+            };
+
+            this.ws.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    console.log("[ArmControlV2View] RX:", msg);
+                } catch (e) {
+                    console.error("[ArmControlV2View] Failed to parse message", e);
+                }
+            };
+
+            this.ws.onclose = () => {
+                console.warn("[ArmControlV2View] Disconnected. Reconnecting in 3s...");
+                this.updateConnectionStatus(false);
+                this.scheduleReconnect();
+            };
+
+            this.ws.onerror = (err) => {
+                console.error("[ArmControlV2View] WebSocket error", err);
+                this.ws.close();
+            };
+        }
+
+        scheduleReconnect() {
+            if (this.reconnectInterval) return;
+            this.reconnectInterval = setInterval(() => {
+                console.log("[ArmControlV2View] Attempting reconnect...");
+                this.initWS();
+            }, 3000);
+        }
+
+        sendUpdate() {
+            if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+
+            if (this.mode === 'FK') {
+                const data = this.jointNames.map(j => this.jointValues[j]);
+                this.ws.send(JSON.stringify({
+                    type: 'joint_cmd',
+                    mode: 'FK',
+                    data
+                }));
+                this.publishJointStates();
+            } else {
+                const data = [
+                    this.ikValues.x,
+                    this.ikValues.y,
+                    this.ikValues.z,
+                    this.ikValues.roll,
+                    this.ikValues.pitch,
+                    this.ikValues.yaw
+                ];
+                this.ws.send(JSON.stringify({
+                    type: 'joint_cmd',
+                    mode: 'IK',
+                    data
+                }));
+                this.publishPose();
+            }
+        }
+
+        // ─── Render ─────────────────────────────────────────────────────────
+
+        render() {
+            this.container.innerHTML = this.getHTML();
+            this.statusElement = this.container.querySelector("#armStatus");
+            this.statusDot     = this.container.querySelector(".status-dot");
+
+            this.bindElements();
+            this.initWS();
+            this.tryConnectROS();
+            this.updateModeUI();
+            this.setupKeyboardListeners();
+        }
+
+        // ─── HTML ────────────────────────────────────────────────────────────
+
+        getHTML() {
+            return `
+            <div class="arm-control-v2-container">
+                <h2 class="section-header">Robotic Arm Control (FK + IK)</h2>
+
+                <div class="status-bar">
+                    <div class="status-dot"></div>
+                    <div id="armStatus">Connecting...</div>
+                    <button id="modeSwitchButton">Switch to IK Mode</button>
+                </div>
+
+                <!-- FK Mode Section -->
+                <div id="fk_container" style="display:none">
+                    <h3 class="section-header">Forward Kinematics (FK)</h3>
+                    <p>Adjust individual joint angles.</p>
+                    
+                    <div class="controls-grid">
+                        ${this.jointNames.map(joint => {
+                            const range = this.jointRanges[joint];
+                            return `
+                                <div class="joint-control">
+                                    <label>${range.label}</label>
+                                    <div class="slider-row">
+                                        <input type="range" id="fk_${joint}_slider" 
+                                               min="${range.min}" max="${range.max}" value="0" step="0.1">
+                                        <span id="fk_${joint}_display">0</span>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+
+                    <div class="preset-buttons">
+                        <button class="preset-button" id="fkHomeBtn">Home Position</button>
+                        <button class="preset-button" id="fkRestBtn">Rest Position</button>
+                    </div>
+
+                    <div class="keyboard-shortcuts-section">
+                        <h4 class="shortcut-header">Keyboard Shortcuts (FK Mode)</h4>
+                        <div class="shortcuts-list">
+                            <div class="shortcut-item">
+                                <span>Joint 1</span>
+                                <span>Q(-) / W(+)</span>
+                            </div>
+                            <div class="shortcut-item">
+                                <span>Joint 2</span>
+                                <span>A(-) / S(+)</span>
+                            </div>
+                            <div class="shortcut-item">
+                                <span>Joint 3</span>
+                                <span>Z(-) / X(+)</span>
+                            </div>
+                            <div class="shortcut-item">
+                                <span>Joint 4</span>
+                                <span>E(-) / R(+)</span>
+                            </div>
+                            <div class="shortcut-item">
+                                <span>Joint 5</span>
+                                <span>D(-) / F(+)</span>
+                            </div>
+                            <div class="shortcut-item">
+                                <span>Joint 6</span>
+                                <span>C(-) / V(+)</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- IK Mode Section -->
+                <div id="ik_container" style="display:none">
+                    <h3 class="section-header">Inverse Kinematics (IK)</h3>
+                    <p>Control end-effector pose with sliders.</p>
+                    
+                    <div class="controls-grid">
+                        ${Object.keys(this.ikRanges).map(axis => {
+                            const range = this.ikRanges[axis];
+                            return `
+                                <div class="ik-control">
+                                    <label>${range.label}</label>
+                                    <div class="slider-row">
+                                        <input type="range" id="ik_${axis}_slider" 
+                                               min="${range.min}" max="${range.max}" 
+                                               value="${this.ikValues[axis]}" step="0.1">
+                                        <span id="ik_${axis}_display">${this.ikValues[axis].toFixed(1)}</span>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+
+                    <div class="preset-buttons">
+                        <button class="preset-button" id="ikHomeBtn">Home Position</button>
+                        <button class="preset-button" id="ikRestBtn">Rest Position</button>
+                    </div>
+
+                    <div class="keyboard-shortcuts-section">
+                        <h4 class="shortcut-header">Keyboard Shortcuts (IK Mode)</h4>
+                        <div class="shortcuts-list">
+                            <div class="shortcut-item">
+                                <span>X Axis</span>
+                                <span>Q(-) / W(+)</span>
+                            </div>
+                            <div class="shortcut-item">
+                                <span>Y Axis</span>
+                                <span>A(-) / S(+)</span>
+                            </div>
+                            <div class="shortcut-item">
+                                <span>Z Axis</span>
+                                <span>Z(-) / X(+)</span>
+                            </div>
+                            <div class="shortcut-item">
+                                <span>Roll</span>
+                                <span>E(-) / R(+)</span>
+                            </div>
+                            <div class="shortcut-item">
+                                <span>Pitch</span>
+                                <span>D(-) / F(+)</span>
+                            </div>
+                            <div class="shortcut-item">
+                                <span>Yaw</span>
+                                <span>C(-) / V(+)</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            `;
+        }
+
+        // ─── UI ──────────────────────────────────────────────────────────────
+
+        updateModeUI() {
+            const fkContainer = this.container.querySelector('#fk_container');
+            const ikContainer = this.container.querySelector('#ik_container');
+            const btn = this.container.querySelector('#modeSwitchButton');
+
+            if (this.mode === 'FK') {
+                fkContainer.style.display = 'block';
+                ikContainer.style.display = 'none';
+                btn.innerText = 'Switch to IK Mode';
+            } else {
+                fkContainer.style.display = 'none';
+                ikContainer.style.display = 'block';
+                btn.innerText = 'Switch to FK Mode';
+            }
+        }
+
+        updateConnectionStatus(connected) {
+            if (this.statusDot) this.statusDot.classList.toggle('connected', connected);
+            if (this.statusElement) {
+                this.statusElement.innerText = connected ? 'WS: Connected' : 'WS: Disconnected';
+            }
+        }
+
+        bindElements() {
+            // FK Sliders
+            this.jointNames.forEach(joint => {
+                const slider = this.container.querySelector(`#fk_${joint}_slider`);
+                const display = this.container.querySelector(`#fk_${joint}_display`);
+
+                this.fkSliders[joint] = slider;
+                this.fkDisplaySpans[joint] = display;
+
+                const handler = (val) => {
+                    val = parseFloat(val);
+                    const range = this.jointRanges[joint];
+                    if (val < range.min) val = range.min;
+                    if (val > range.max) val = range.max;
+
+                    this.jointValues[joint] = val;
+                    slider.value = val;
+                    display.innerText = val.toFixed(1);
+
+                    if (this.mode === 'FK') this.sendUpdate();
+                };
+
+                slider.oninput = () => handler(slider.value);
+            });
+
+            // IK Sliders
+            Object.keys(this.ikRanges).forEach(axis => {
+                const slider = this.container.querySelector(`#ik_${axis}_slider`);
+                const display = this.container.querySelector(`#ik_${axis}_display`);
+
+                this.ikSliders[axis] = slider;
+                this.ikDisplaySpans[axis] = display;
+
+                const handler = (val) => {
+                    val = parseFloat(val);
+                    const range = this.ikRanges[axis];
+                    if (val < range.min) val = range.min;
+                    if (val > range.max) val = range.max;
+
+                    this.ikValues[axis] = val;
+                    slider.value = val;
+                    display.innerText = val.toFixed(1);
+
+                    if (this.mode === 'IK') this.sendUpdate();
+                };
+
+                slider.oninput = () => handler(slider.value);
+            });
+
+            // Mode switch
+            this.container.querySelector('#modeSwitchButton').onclick = () => {
+                this.mode = this.mode === 'FK' ? 'IK' : 'FK';
+                this.updateModeUI();
+            };
+
+            // FK presets
+            this.container.querySelector('#fkHomeBtn').onclick = () => this.applyFKPreset('home');
+            this.container.querySelector('#fkRestBtn').onclick = () => this.applyFKPreset('rest');
+
+            // IK presets
+            this.container.querySelector('#ikHomeBtn').onclick = () => this.applyIKPreset('home');
+            this.container.querySelector('#ikRestBtn').onclick = () => this.applyIKPreset('rest');
+        }
+
+        // ─── Keyboard Shortcuts ──────────────────────────────────────────────
+
+        setupKeyboardListeners() {
+            console.log("[ArmControlV2View] Setting up keyboard listeners...");
+            
+            this.keyDownHandler = (e) => this.handleKeyDown(e);
+            this.keyUpHandler = (e) => this.handleKeyUp(e);
+            
+            window.addEventListener('keydown', this.keyDownHandler, true);
+            window.addEventListener('keyup', this.keyUpHandler, true);
+            
+            if (this.container) {
+                this.container.addEventListener('keydown', this.keyDownHandler);
+                this.container.addEventListener('keyup', this.keyUpHandler);
+                this.container.tabIndex = 0;
+            }
+            
+            console.log("[ArmControlV2View] Keyboard listeners attached");
+        }
+
+        handleKeyDown(e) {
+            const key = e.key.toLowerCase();
+            this.keysPressed[key] = true;
+
+            // Get increment size from number keys 1-5
+            let increment = 1;
+            if (key >= '1' && key <= '5') {
+                increment = parseInt(key);
+                return;
+            }
+
+            const keyMap = {
+                'q': 0, 'w': 1,   // Joint/Axis 0
+                'a': 2, 's': 3,   // Joint/Axis 1
+                'z': 4, 'x': 5,   // Joint/Axis 2
+                'e': 6, 'r': 7,   // Joint/Axis 3
+                'd': 8, 'f': 9,   // Joint/Axis 4
+                'c': 10, 'v': 11  // Joint/Axis 5
+            };
+
+            if (keyMap.hasOwnProperty(key)) {
+                e.preventDefault();
+                const mapValue = keyMap[key];
+                const isDecrement = (mapValue % 2) === 0; // 0,2,4,6,8,10 are decrease
+                const axisIndex = Math.floor(mapValue / 2);
+
+                if (this.mode === 'FK') {
+                    const joint = this.jointNames[axisIndex];
+                    const currentIncrement = this.keysPressed['1'] ? 1 : 
+                                           this.keysPressed['2'] ? 2 :
+                                           this.keysPressed['3'] ? 3 :
+                                           this.keysPressed['4'] ? 4 :
+                                           this.keysPressed['5'] ? 5 : 1;
+                    const delta = isDecrement ? -currentIncrement : currentIncrement;
+                    const newValue = this.jointValues[joint] + delta;
+
+                    this.fkSliders[joint].value = newValue;
+                    const event = new Event('input', { bubbles: true });
+                    this.fkSliders[joint].dispatchEvent(event);
+                } else {
+                    const axes = ['x', 'y', 'z', 'roll', 'pitch', 'yaw'];
+                    const axis = axes[axisIndex];
+                    const currentIncrement = this.keysPressed['1'] ? 1 : 
+                                           this.keysPressed['2'] ? 2 :
+                                           this.keysPressed['3'] ? 3 :
+                                           this.keysPressed['4'] ? 4 :
+                                           this.keysPressed['5'] ? 5 : 1;
+                    const delta = isDecrement ? -currentIncrement : currentIncrement;
+                    const newValue = this.ikValues[axis] + delta;
+
+                    this.ikSliders[axis].value = newValue;
+                    const event = new Event('input', { bubbles: true });
+                    this.ikSliders[axis].dispatchEvent(event);
+                }
+            }
+        }
+
+        handleKeyUp(e) {
+            const key = e.key.toLowerCase();
+            delete this.keysPressed[key];
+        }
+
+        // ─── Presets ────────────────────────────────────────────────────────
+
+        applyFKPreset(type) {
+            const preset = this.fkPresets[type];
+            if (!preset) return;
+
+            this.jointNames.forEach(joint => {
+                const value = preset[joint];
+                this.jointValues[joint] = value;
+                this.fkSliders[joint].value = value;
+                this.fkDisplaySpans[joint].innerText = value.toFixed(1);
+            });
+
+            this.sendUpdate();
+        }
+
+        applyIKPreset(type) {
+            const preset = this.ikPresets[type];
+            if (!preset) return;
+
+            Object.keys(preset).forEach(axis => {
+                const value = preset[axis];
+                this.ikValues[axis] = value;
+                this.ikSliders[axis].value = value;
+                this.ikDisplaySpans[axis].innerText = value.toFixed(1);
+            });
+
+            this.sendUpdate();
+        }
+
+        // ─── ROS (optional) ─────────────────────────────────────────────────
+
+        tryConnectROS() {
+            if (typeof ROSLIB === 'undefined') {
+                console.info("[ArmControlV2View] ROSLIB not found — using WS bridge only");
+                return;
+            }
+
+            this.ros = new ROSLIB.Ros({ url: 'ws://localhost:9090' });
+
+            this.ros.on('connection', () => {
+                console.log("[ArmControlV2View] ROSLIB connected");
+                this.setupROS();
+            });
+
+            this.ros.on('error', (e) => console.error("[ArmControlV2View] ROSLIB error", e));
+            this.ros.on('close', ()  => console.warn("[ArmControlV2View] ROSLIB closed"));
+        }
+
+        setupROS() {
+            this.jointPublisher = new ROSLIB.Topic({
+                ros: this.ros,
+                name: '/fk_joint_states',
+                messageType: 'sensor_msgs/JointState'
+            });
+
+            this.posePublisher = new ROSLIB.Topic({
+                ros: this.ros,
+                name: '/ik_target_pose',
+                messageType: 'std_msgs/Float64MultiArray'
+            });
+        }
+
+        publishJointStates() {
+            if (!this.jointPublisher) return;
+            const pos = this.jointNames.map(j => this.jointValues[j] * Math.PI / 180);
+            this.jointPublisher.publish({ name: this.jointNames, position: pos });
+        }
+
+        publishPose() {
+            if (!this.posePublisher) return;
+            const data = [
+                this.ikValues.x,
+                this.ikValues.y,
+                this.ikValues.z,
+                this.ikValues.roll,
+                this.ikValues.pitch,
+                this.ikValues.yaw
+            ];
+            this.posePublisher.publish({ data });
+            console.log("[ArmControlV2View] Published IK pose:", data);
+        }
+
+        // ─── Destroy ────────────────────────────────────────────────────────
+
+        destroy() {
+            if (this.reconnectInterval) clearInterval(this.reconnectInterval);
+            if (this.ws) this.ws.close();
+            if (this.ros) this.ros.close();
+            
+            if (this.keyDownHandler) window.removeEventListener('keydown', this.keyDownHandler, true);
+            if (this.keyUpHandler) window.removeEventListener('keyup', this.keyUpHandler, true);
+            
+            if (this.container) {
+                if (this.keyDownHandler) this.container.removeEventListener('keydown', this.keyDownHandler);
+                if (this.keyUpHandler) this.container.removeEventListener('keyup', this.keyUpHandler);
+            }
+            
+            console.log('[ArmControlV2View] destroyed');
+        }
+    }
+
+    window.ArmControlV2View = ArmControlV2View;
+
+})();
