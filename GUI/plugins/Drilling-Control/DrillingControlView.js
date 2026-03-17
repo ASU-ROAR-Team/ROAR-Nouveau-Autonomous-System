@@ -14,19 +14,31 @@
             this.currentRoverState = { rover_state: 'IDLE', active_mission: '' };
             this.last_known_height = 0.0;
 
+            // UPDATED: Manual control state with speed
             this.currentManualInputState = {
-                manual_up:   false,
-                manual_down: false,
-                auger_on:    false,
-                gate_open:   false
+                direction: 0,       // -1 (down), 0 (idle), 1 (up)
+                auger_on: false,
+                speed: 0.0,         // 0 to 20 m/s
+                stop_enabled: false
             };
 
-            // NEW: Drilling mission state
+            // UPDATED: Drilling mission state (single combined topic)
             this.drillingMissionState = {
-                location: 0.0,      // -25 to +25
-                servo_on: 0,        // 0 = off, 1 = on
-                load_cell_on: 0     // 0 = off, 1 = on
+                location: 0.0,      // -25 to 35 cm
+                servo_on: 0,        // 0 or 1
+                load_cell_on: 0     // 0 or 1
             };
+
+            // Track last published mission state to avoid redundant sends
+            this.lastPublishedMissionState = {
+                location: 0.0,
+                servo_on: 0,
+                load_cell_on: 0
+            };
+
+            // Debounce timer for location slider rapid updates
+            this.locationSliderDebounceTimer = null;
+            this.LOCATION_DEBOUNCE_MS = 150;
 
             // DOM refs — populated in initializeUI()
             this.rosStatusDot            = null;
@@ -36,13 +48,16 @@
             this.sampleWeightDisplay     = null;
             this.platformUpButton        = null;
             this.platformDownButton      = null;
+            this.platformStopButton      = null;
+            this.speedSlider             = null;
+            this.speedSliderValue        = null;
             this.augerToggleSwitch       = null;
             this.gateToggleSwitch        = null;
             this.webcamImageElement      = null;
             this.webcamStatusMsgElement  = null;
             this.webcamSnapshotButton    = null;
 
-            // NEW: Drilling mission UI refs
+            // UPDATED: Drilling mission UI refs
             this.locationSlider          = null;
             this.locationSliderValue     = null;
             this.servoToggleSwitch       = null;
@@ -113,12 +128,14 @@
         }
 
         // ─── Publish drilling command over WS ───────────────────────────────
+        // UPDATED: Now sends Float64MultiArray [direction, auger, speed, stop]
 
         publishDrillingCommand() {
-            if (this.currentRoverState.active_mission.toLowerCase() !== 'teleoperation') {
-                console.warn('Not in Teleoperation mode. Command not sent.');
+            // Allow manual controls during any active mission (teleoperation, drilling, etc.)
+            if (!this.currentRoverState.active_mission || this.currentRoverState.active_mission.trim() === '') {
+                console.warn('No active mission. Command not sent.');
                 if (this.openmct && this.openmct.notifications) {
-                    this.openmct.notifications.warn('Manual controls are disabled outside of Teleoperation mode.');
+                    this.openmct.notifications.warn('Manual controls require an active mission.');
                 }
                 return;
             }
@@ -128,53 +145,60 @@
                 return;
             }
 
-            // Use std_msgs/String-equivalent JSON payload
-            // Bridge publishes this to /drilling/command_to_actuators as std_msgs/String
-            this.ws.send(JSON.stringify({
+            // Payload: [direction, auger, speed, stop]
+            const payload = {
                 type: 'drilling_cmd',
-                data: {
-                    target_height_cm: (this.currentManualInputState.manual_up || this.currentManualInputState.manual_down)
-                        ? 0.0
-                        : this.last_known_height,
-                    manual_up:   this.currentManualInputState.manual_up,
-                    manual_down: this.currentManualInputState.manual_down,
-                    auger_on:    this.currentManualInputState.auger_on,
-                    gate_open:   this.currentManualInputState.gate_open
-                }
-            }));
+                data: [
+                    this.currentManualInputState.direction,  // -1 (down), 0 (idle), 1 (up)
+                    this.currentManualInputState.auger_on ? 1 : 0,
+                    this.currentManualInputState.speed,
+                    this.currentManualInputState.stop_enabled ? 1 : 0
+                ]
+            };
 
-            console.log('[DrillingControlView] Sent drilling command:', this.currentManualInputState);
+            this.ws.send(JSON.stringify(payload));
+            console.log('[DrillingControlView] Sent drilling command:', payload);
         }
 
-        // NEW: Publish drilling mission commands (location, servo, load_cell)
+        // UPDATED: Publish drilling mission commands (combined into single topic)
+        // Sends [location, servo, load_cell] as Float64MultiArray
 
-        publishDrillingMissionCommand(commandType) {
+        publishDrillingMissionCommand() {
             if (!this.wsConnected || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
                 console.warn('[DrillingControlView] WS not connected. Mission command not sent.');
                 return;
             }
 
-            let payload = {};
+            // Check if state has actually changed
+            const stateChanged = 
+                this.drillingMissionState.location !== this.lastPublishedMissionState.location ||
+                this.drillingMissionState.servo_on !== this.lastPublishedMissionState.servo_on ||
+                this.drillingMissionState.load_cell_on !== this.lastPublishedMissionState.load_cell_on;
 
-            if (commandType === 'location') {
-                payload = {
-                    type: 'drilling_mission_location',
-                    data: this.drillingMissionState.location
-                };
-            } else if (commandType === 'servo') {
-                payload = {
-                    type: 'drilling_mission_servo',
-                    data: this.drillingMissionState.servo_on
-                };
-            } else if (commandType === 'load_cell') {
-                payload = {
-                    type: 'drilling_mission_load_cell',
-                    data: this.drillingMissionState.load_cell_on
-                };
+            if (!stateChanged) {
+                console.log('[DrillingControlView] Mission state unchanged, skipping publish');
+                return;
             }
 
+            const payload = {
+                type: 'drilling_mission_cmd',
+                data: [
+                    this.drillingMissionState.location,     // -25 to 35 cm
+                    this.drillingMissionState.servo_on,     // 0 or 1
+                    this.drillingMissionState.load_cell_on  // 0 or 1
+                ]
+            };
+
             this.ws.send(JSON.stringify(payload));
-            console.log(`[DrillingControlView] Sent drilling mission command (${commandType}):`, payload);
+            
+            // Update last published state
+            this.lastPublishedMissionState = {
+                location: this.drillingMissionState.location,
+                servo_on: this.drillingMissionState.servo_on,
+                load_cell_on: this.drillingMissionState.load_cell_on
+            };
+
+            console.log('[DrillingControlView] Sent drilling mission command:', payload);
         }
 
         // ─── Inbound message handlers ───────────────────────────────────────
@@ -304,10 +328,13 @@
             this.sampleWeightDisplay  = this.element.querySelector('#drillingSampleWeight');
             this.platformUpButton     = this.element.querySelector('#drillingPlatformUpButton');
             this.platformDownButton   = this.element.querySelector('#drillingPlatformDownButton');
+            this.platformStopButton   = this.element.querySelector('#drillingPlatformStopButton');
+            this.speedSlider          = this.element.querySelector('#drillingSpeedSlider');
+            this.speedSliderValue     = this.element.querySelector('#drillingSpeedValue');
             this.augerToggleSwitch    = this.element.querySelector('#drillingAugerToggle');
             this.gateToggleSwitch     = this.element.querySelector('#drillingGateToggle');
 
-            // NEW: Drilling mission UI refs
+            // UPDATED: Drilling mission UI refs
             this.locationSlider       = this.element.querySelector('#drillingLocationSlider');
             this.locationSliderValue  = this.element.querySelector('#drillingLocationValue');
             this.servoToggleSwitch    = this.element.querySelector('#drillingServoToggle');
@@ -329,28 +356,87 @@
         }
 
         addEventListeners() {
-            const addMomentary = (btn, cmd) => {
-                if (!btn) return;
-                btn.addEventListener('mousedown',  () => { if (!btn.disabled) this.handleManualButton(cmd, true);  });
-                btn.addEventListener('mouseup',    () => { if (!btn.disabled) this.handleManualButton(cmd, false); });
-                btn.addEventListener('mouseleave', () => { if (!btn.disabled) this.handleManualButton(cmd, false); });
-            };
+            // UPDATED: Manual control buttons with direction handling
+            if (this.platformUpButton) {
+                this.platformUpButton.addEventListener('mousedown', () => {
+                    if (!this.platformUpButton.disabled) {
+                        this.currentManualInputState.direction = 1;
+                        this.publishDrillingCommand();
+                    }
+                });
+                this.platformUpButton.addEventListener('mouseup', () => {
+                    if (!this.platformUpButton.disabled) {
+                        this.currentManualInputState.direction = 0;
+                        this.publishDrillingCommand();
+                    }
+                });
+                this.platformUpButton.addEventListener('mouseleave', () => {
+                    if (!this.platformUpButton.disabled) {
+                        this.currentManualInputState.direction = 0;
+                        this.publishDrillingCommand();
+                    }
+                });
+            }
 
-            addMomentary(this.platformUpButton,   'manual_up');
-            addMomentary(this.platformDownButton, 'manual_down');
+            if (this.platformDownButton) {
+                this.platformDownButton.addEventListener('mousedown', () => {
+                    if (!this.platformDownButton.disabled) {
+                        this.currentManualInputState.direction = -1;
+                        this.publishDrillingCommand();
+                    }
+                });
+                this.platformDownButton.addEventListener('mouseup', () => {
+                    if (!this.platformDownButton.disabled) {
+                        this.currentManualInputState.direction = 0;
+                        this.publishDrillingCommand();
+                    }
+                });
+                this.platformDownButton.addEventListener('mouseleave', () => {
+                    if (!this.platformDownButton.disabled) {
+                        this.currentManualInputState.direction = 0;
+                        this.publishDrillingCommand();
+                    }
+                });
+            }
+
+            // NEW: Stop button toggle
+            if (this.platformStopButton) {
+                this.platformStopButton.addEventListener('click', () => {
+                    if (!this.platformStopButton.disabled) {
+                        this.currentManualInputState.stop_enabled = !this.currentManualInputState.stop_enabled;
+                        this.platformStopButton.classList.toggle('active', this.currentManualInputState.stop_enabled);
+                        this.publishDrillingCommand();
+                    }
+                });
+            }
+
+            // NEW: Speed slider listener (0-20 m/s, 0.5 step)
+            if (this.speedSlider) {
+                this.speedSlider.addEventListener('input', (e) => {
+                    const value = parseFloat(e.target.value);
+                    this.currentManualInputState.speed = value;
+                    if (this.speedSliderValue) {
+                        this.speedSliderValue.textContent = value.toFixed(1);
+                    }
+                    this.publishDrillingCommand();
+                });
+            }
 
             if (this.augerToggleSwitch) {
                 this.augerToggleSwitch.addEventListener('change', () => {
-                    this.handleSwitchChange('auger_on', this.augerToggleSwitch.checked);
-                });
-            }
-            if (this.gateToggleSwitch) {
-                this.gateToggleSwitch.addEventListener('change', () => {
-                    this.handleSwitchChange('gate_open', this.gateToggleSwitch.checked);
+                    this.currentManualInputState.auger_on = this.augerToggleSwitch.checked;
+                    this.publishDrillingCommand();
                 });
             }
 
-            // NEW: Location slider listener
+            if (this.gateToggleSwitch) {
+                this.gateToggleSwitch.addEventListener('change', () => {
+                    // Gate toggle logic (if needed)
+                    this.publishDrillingCommand();
+                });
+            }
+
+            // UPDATED: Location slider with debounce
             if (this.locationSlider) {
                 this.locationSlider.addEventListener('input', (e) => {
                     const value = parseFloat(e.target.value);
@@ -358,23 +444,28 @@
                     if (this.locationSliderValue) {
                         this.locationSliderValue.textContent = value.toFixed(1);
                     }
-                    this.publishDrillingMissionCommand('location');
+
+                    // Debounce the publish
+                    clearTimeout(this.locationSliderDebounceTimer);
+                    this.locationSliderDebounceTimer = setTimeout(() => {
+                        this.publishDrillingMissionCommand();
+                    }, this.LOCATION_DEBOUNCE_MS);
                 });
             }
 
-            // NEW: Servo toggle listener
+            // UPDATED: Servo toggle
             if (this.servoToggleSwitch) {
                 this.servoToggleSwitch.addEventListener('change', () => {
                     this.drillingMissionState.servo_on = this.servoToggleSwitch.checked ? 1 : 0;
-                    this.publishDrillingMissionCommand('servo');
+                    this.publishDrillingMissionCommand();
                 });
             }
 
-            // NEW: Load cell toggle listener
+            // UPDATED: Load cell toggle
             if (this.loadCellToggleSwitch) {
                 this.loadCellToggleSwitch.addEventListener('change', () => {
                     this.drillingMissionState.load_cell_on = this.loadCellToggleSwitch.checked ? 1 : 0;
-                    this.publishDrillingMissionCommand('load_cell');
+                    this.publishDrillingMissionCommand();
                 });
             }
 
@@ -393,28 +484,6 @@
                     this.webcamSnapshotButton.style.boxShadow  = '0 4px 8px rgba(0,0,0,0.3)';
                 });
             }
-        }
-
-        handleManualButton(cmd, value) {
-            if (this.currentRoverState.active_mission.toLowerCase() !== 'teleoperation') return;
-            this.currentManualInputState[cmd] = value;
-            if (cmd === 'manual_up'   && value) this.currentManualInputState.manual_down = false;
-            if (cmd === 'manual_down' && value) this.currentManualInputState.manual_up   = false;
-            this.publishDrillingCommand();
-        }
-
-        handleSwitchChange(cmd, value) {
-            if (this.currentRoverState.active_mission.toLowerCase() !== 'teleoperation') {
-                // Revert toggle
-                if (this.augerToggleSwitch) this.augerToggleSwitch.checked = this.currentManualInputState.auger_on;
-                if (this.gateToggleSwitch)  this.gateToggleSwitch.checked  = this.currentManualInputState.gate_open;
-                if (this.openmct && this.openmct.notifications) {
-                    this.openmct.notifications.warn('Manual controls are disabled outside of Teleoperation mode.');
-                }
-                return;
-            }
-            this.currentManualInputState[cmd] = value;
-            this.publishDrillingCommand();
         }
 
         handleEditModeChange = (isEditing) => {
@@ -438,13 +507,20 @@
         }
 
         updateManualControlUIState() {
-            const enabled = this.currentRoverState.active_mission.toLowerCase() === 'teleoperation';
+            // Enable manual controls if there's any active mission (not just teleoperation)
+            const enabled = this.currentRoverState.active_mission && this.currentRoverState.active_mission.trim() !== '';
 
-            [this.platformUpButton, this.platformDownButton].forEach(btn => {
+            [this.platformUpButton, this.platformDownButton, this.platformStopButton].forEach(btn => {
                 if (!btn) return;
                 btn.disabled = !enabled;
                 btn.classList.toggle('disabled-manual-control', !enabled);
             });
+
+            if (this.speedSlider) {
+                this.speedSlider.disabled = !enabled;
+                const sliderContainer = this.speedSlider.closest('.drilling-speed-slider-container');
+                if (sliderContainer) sliderContainer.classList.toggle('disabled', !enabled);
+            }
 
             [this.augerToggleSwitch, this.gateToggleSwitch].forEach(sw => {
                 if (!sw) return;
@@ -456,10 +532,10 @@
             const note = this.element.querySelector('.drilling-control-section p');
             if (note) {
                 if (enabled) {
-                    note.textContent  = 'These controls directly command the rig. Active in Teleoperation mode.';
+                    note.textContent  = `These controls are active in ${this.currentRoverState.active_mission} mode.`;
                     note.style.color  = '#666';
                 } else {
-                    note.textContent  = `Manual controls disabled. Current mission: ${this.currentRoverState.active_mission || 'None'}.`;
+                    note.textContent  = `Manual controls disabled. No active mission.`;
                     note.style.color  = '#e74c3c';
                 }
             }
@@ -471,6 +547,7 @@
             console.log('[DrillingControlView] Destroying...');
 
             if (this.reconnectInterval) clearInterval(this.reconnectInterval);
+            if (this.locationSliderDebounceTimer) clearTimeout(this.locationSliderDebounceTimer);
             if (this.ws) this.ws.close();
 
             if (this.openmct && this.openmct.editor) {
@@ -479,7 +556,8 @@
 
             // Null out all refs
             this.ws = this.ros = this.openmct = null;
-            this.platformUpButton = this.platformDownButton = null;
+            this.platformUpButton = this.platformDownButton = this.platformStopButton = null;
+            this.speedSlider = this.speedSliderValue = null;
             this.augerToggleSwitch = this.gateToggleSwitch = null;
             this.webcamImageElement = this.webcamStatusMsgElement = this.webcamSnapshotButton = null;
             this.rosStatusDot = this.rosStatus = this.fsmStateDisplay = null;

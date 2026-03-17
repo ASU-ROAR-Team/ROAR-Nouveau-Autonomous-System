@@ -32,12 +32,14 @@ class WSROS2Bridge(Node):
 
         # Mission and drilling
         self.mission_pub  = self.create_publisher(String,             '/mission_cmd',                   10)
-        self.drilling_pub = self.create_publisher(String,             '/drilling/command_to_actuators',  10)
+        
+        # UPDATED: Single combined drilling command topic (Float64MultiArray)
+        # [direction (-1=down, 1=up), auger (0/1), speed (m/s), stop (0/1)]
+        self.drilling_pub = self.create_publisher(Float64MultiArray,  '/drilling/command_to_actuators',  10)
 
-        # NEW: Drilling mission publishers
-        self.drilling_location_pub = self.create_publisher(Float64MultiArray, '/drilling/mission/location',    10)
-        self.servo_pub             = self.create_publisher(Int32,             '/drilling/mission/servo',       10)
-        self.load_cell_pub         = self.create_publisher(Int32,             '/drilling/mission/load_cell',   10)
+        # UPDATED: Single combined drilling mission topic (Float64MultiArray)
+        # [location (-25 to 35 cm), servo (0/1), load_cell (0/1)]
+        self.drilling_mission_pub = self.create_publisher(Float64MultiArray, '/drilling/mission_cmd', 10)
 
         # Navigation
         self.cmd_vel_pub  = self.create_publisher(Twist,              '/cmd_vel',                       10)
@@ -133,32 +135,25 @@ class WSROS2Bridge(Node):
                 out.data = json.dumps({"command": msg.get("command", ""), "mission": msg.get("mission", "")})
                 self.mission_pub.publish(out)
 
+            # UPDATED: Drilling command now expects Float64MultiArray
+            # data = [direction, auger, speed, stop]
             elif msg_type == "drilling_cmd":
-                out      = String()
-                out.data = json.dumps(msg.get("data", {}))
-                self.drilling_pub.publish(out)
+                data = msg.get("data", [])
+                if len(data) >= 4:
+                    drilling_msg      = Float64MultiArray()
+                    drilling_msg.data = [float(x) for x in data[:4]]
+                    self.drilling_pub.publish(drilling_msg)
+                    self.get_logger().info(f"Drilling command: direction={data[0]}, auger={data[1]}, speed={data[2]}, stop={data[3]}")
 
-            # NEW: Drilling mission commands
-            elif msg_type == "drilling_mission_location":
-                location_value = msg.get("data", 0.0)
-                location_msg      = Float64MultiArray()
-                location_msg.data = [float(location_value)]
-                self.drilling_location_pub.publish(location_msg)
-                self.get_logger().info(f"Drilling location: {location_value}")
-
-            elif msg_type == "drilling_mission_servo":
-                servo_value = msg.get("data", 0)
-                servo_msg      = Int32()
-                servo_msg.data = int(servo_value)
-                self.servo_pub.publish(servo_msg)
-                self.get_logger().info(f"Servo: {servo_value}")
-
-            elif msg_type == "drilling_mission_load_cell":
-                load_cell_value = msg.get("data", 0)
-                load_cell_msg      = Int32()
-                load_cell_msg.data = int(load_cell_value)
-                self.load_cell_pub.publish(load_cell_msg)
-                self.get_logger().info(f"Load cell: {load_cell_value}")
+            # UPDATED: Drilling mission command as Float64MultiArray
+            # data = [location, servo, load_cell]
+            elif msg_type == "drilling_mission_cmd":
+                data = msg.get("data", [])
+                if len(data) >= 3:
+                    mission_msg      = Float64MultiArray()
+                    mission_msg.data = [float(x) for x in data[:3]]
+                    self.drilling_mission_pub.publish(mission_msg)
+                    self.get_logger().info(f"Drilling mission command: location={data[0]}, servo={data[1]}, load_cell={data[2]}")
 
             elif msg_type == "cmd_vel":
                 data    = msg.get("data", {})
@@ -172,6 +167,7 @@ class WSROS2Bridge(Node):
                 twist.angular.y = float(angular.get("y", 0.0))
                 twist.angular.z = float(angular.get("z", 0.0))
                 self.cmd_vel_pub.publish(twist)
+                
             elif msg_type == "lock_orientation":
                 out = String()
                 out.data = msg.get("data", "OFF")

@@ -159,6 +159,29 @@
     box-shadow: none;
 }
 
+/* UPDATED: Stop button styling (warning color) */
+.drilling-stop-button {
+    background-color: #e74c3c;
+    grid-column: span 2;
+}
+
+.drilling-stop-button:hover:not(:disabled) {
+    background-color: #c0392b;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.25);
+}
+
+.drilling-stop-button:active:not(:disabled) {
+    transform: translateY(1px);
+    box-shadow: 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+/* Active state for stop button when engaged */
+.drilling-stop-button.active {
+    background-color: #a93226;
+    box-shadow: 0 0 12px rgba(231, 76, 60, 0.6) inset;
+}
+
 /* Switch container and label */
 .drilling-switch-container {
     display: flex;
@@ -236,7 +259,21 @@ input:checked + .drilling-slider:before {
     cursor: not-allowed;
 }
 
-/* ─── NEW: Location Slider Styles ─── */
+/* ─── NEW: Speed Slider Styles ─── */
+.drilling-speed-slider-container {
+    margin-top: 12px;
+    padding: 12px;
+    background-color: #f9fafb;
+    border-radius: 8px;
+    border-left: 4px solid #e74c3c;
+}
+
+.drilling-speed-slider-container.disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* ─── Location/Mission Slider Styles ─── */
 .drilling-mission-slider-container {
     margin-top: 12px;
     padding: 12px;
@@ -343,7 +380,7 @@ input:checked + .drilling-slider:before {
     font-weight: normal;
 }
 
-/* Slider labels (-25, 0, +25) */
+/* Slider labels (-25, 0, +25 for location; 0, 10, 20 for speed) */
 .drilling-slider-labels {
     display: flex;
     justify-content: space-between;
@@ -506,6 +543,14 @@ input:checked + .drilling-slider:before {
 
     .drilling-controls-grid {
         grid-template-columns: 1fr;
+    }
+
+    .drilling-control-buttons {
+        grid-template-columns: 1fr;
+    }
+
+    .drilling-stop-button {
+        grid-column: span 1;
     }
 
     .drilling-telemetry-display {
